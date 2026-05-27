@@ -11,7 +11,7 @@ const model = process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2";
 const voice = process.env.OPENAI_REALTIME_VOICE ?? "marin";
 const apiKey = process.env.OPENAI_API_KEY;
 const summaryModel = process.env.OPENAI_SUMMARY_MODEL ?? "gpt-5.4-mini";
-const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const instructions = `

@@ -43,6 +43,7 @@ VITE_REALTIME_TOKEN_URL=/api/token
 VITE_SESSION_SAVE_URL=/api/sessions
 VITE_RECENT_WORLDS_URL=/api/worlds/recent
 SUPABASE_URL=https://your-project.supabase.co
+# `SUPABASE_URL` 대신 Vercel/Supabase 템플릿의 `NEXT_PUBLIC_SUPABASE_URL`을 써도 됩니다.
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
