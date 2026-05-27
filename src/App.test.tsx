@@ -36,6 +36,8 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: /세션 시작/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /세계 저장/ })).toBeDisabled();
     expect(screen.getByText("마이크 대기")).toBeInTheDocument();
+    expect(screen.queryByText("http://localhost:8787/token")).not.toBeInTheDocument();
+    expect(screen.queryByText("API 키는 브라우저가 아니라 로컬 서버에만 둡니다.")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "최근 세계" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ })).toBeInTheDocument();
   });

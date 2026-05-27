@@ -355,10 +355,11 @@ export default function App() {
         <button className="icon-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>
           {isSaving ? "저장 중" : "세계 저장"}
         </button>
-        <div className="connection-note">
-          <span>{tokenUrl}</span>
-          <strong>{error || saveStatus || "API 키는 브라우저가 아니라 로컬 서버에만 둡니다."}</strong>
-        </div>
+        {(error || saveStatus) && (
+          <div className="connection-note" role="status">
+            <strong>{error || saveStatus}</strong>
+          </div>
+        )}
       </section>
 
       <section className="recent-worlds" aria-label="최근 저장한 세계">
