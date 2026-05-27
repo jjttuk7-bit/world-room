@@ -200,6 +200,12 @@ li {
   margin: 0;
 }
 
+.panel-hint {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .world-card button {
   align-self: end;
   min-height: 40px;
