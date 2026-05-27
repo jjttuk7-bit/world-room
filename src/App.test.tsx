@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
 beforeEach(() => {
@@ -28,6 +28,10 @@ beforeEach(() => {
   );
 });
 
+afterEach(() => {
+  cleanup();
+});
+
 describe("World Room 앱", () => {
   it("한국어 Realtime 음성 세션 시작 화면을 보여준다", async () => {
     render(<App />);
@@ -42,5 +46,25 @@ describe("World Room 앱", () => {
     expect(screen.queryByText("API 키는 브라우저가 아니라 로컬 서버에만 둡니다.")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "최근 세계" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "새 세계 열기" })).toBeInTheDocument();
+    expect(screen.getByLabelText("세계 씨앗")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "몽환적" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "질문 위주" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("사용자가 세계 씨앗과 렌즈를 설정할 수 있다", async () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("세계 씨앗"), {
+      target: { value: "비가 위로 내리는 항구 도시" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "어두운" }));
+    fireEvent.click(screen.getByRole("button", { name: "미스터리" }));
+    fireEvent.click(screen.getByRole("button", { name: "선택지 제안" }));
+
+    expect(screen.getByLabelText("세계 씨앗")).toHaveValue("비가 위로 내리는 항구 도시");
+    expect(screen.getByRole("button", { name: "어두운" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "미스터리" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "선택지 제안" })).toHaveAttribute("aria-pressed", "true");
   });
 });

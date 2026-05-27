@@ -49,6 +49,7 @@ button {
 .hero-panel,
 .control-strip,
 .recent-worlds,
+.seed-panel,
 .transcript-panel,
 .spark-panel,
 .prompt-panel,
@@ -160,6 +161,74 @@ li {
 
 .recent-worlds {
   padding: 18px;
+}
+
+.seed-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.seed-input {
+  display: grid;
+  gap: 8px;
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.seed-input textarea {
+  min-height: 78px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(245, 240, 223, 0.06);
+  color: var(--ink);
+  padding: 12px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.seed-input textarea:focus,
+.choice-row button:focus-visible {
+  outline: 2px solid rgba(232, 189, 101, 0.8);
+  outline-offset: 2px;
+}
+
+.choice-row {
+  display: grid;
+  gap: 8px;
+}
+
+.choice-row span {
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.choice-row div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.choice-row button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(245, 240, 223, 0.06);
+  color: var(--ink);
+  padding: 8px 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.choice-row button[aria-pressed="true"] {
+  border-color: rgba(232, 189, 101, 0.7);
+  background: var(--amber);
+  color: #201a10;
 }
 
 .world-card-grid {
@@ -389,6 +458,7 @@ button:disabled {
   }
 
   .hero-panel,
+  .seed-panel,
   .transcript-panel,
   .spark-panel,
   .prompt-panel,

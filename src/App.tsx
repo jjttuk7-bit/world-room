@@ -23,6 +23,10 @@ const openingPrompts = [
   "평화로운 마을에 오늘 터질 갈등을 만들어줘.",
 ];
 
+const moodOptions = ["몽환적", "어두운", "따뜻한", "기묘한", "모험적"];
+const genreOptions = ["판타지", "SF", "미스터리", "호러", "동화", "동양풍"];
+const companionModes = ["질문 위주", "선택지 제안", "장면 묘사", "인물 중심"];
+
 const validationItems = [
   "브라우저가 마이크 권한을 요청하고, 거부 시 오류 문구가 보이는가",
   "세션 시작 후 상태가 연결 중에서 대화 준비로 바뀌는가",
@@ -53,6 +57,10 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [recentWorlds, setRecentWorlds] = useState<RecentWorld[]>([]);
   const [selectedWorld, setSelectedWorld] = useState<RecentWorld | null>(null);
+  const [worldSeed, setWorldSeed] = useState("");
+  const [mood, setMood] = useState(moodOptions[0]);
+  const [genre, setGenre] = useState(genreOptions[0]);
+  const [companionMode, setCompanionMode] = useState(companionModes[0]);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -233,7 +241,7 @@ export default function App() {
               type: "input_text",
               text: selectedWorld
                 ? `이전 세계를 이어갑니다. 제목: ${selectedWorld.title}\n기억 요약: ${selectedWorld.continuityBrief}\n한국어로 짧게 반갑게 맞이하고, 지난 세계의 다음 장면으로 들어가는 질문 하나를 던져줘.`
-                : "한국어로 짧게 인사하고, 내가 말로 세계를 만들 수 있게 첫 질문 하나를 던져줘.",
+                : buildSeedPrompt(worldSeed, mood, genre, companionMode),
             },
           ],
         },
@@ -294,6 +302,15 @@ export default function App() {
   function continueWorld(world: RecentWorld) {
     setSelectedWorld(world);
     setStatusText(`${world.title} 이어 말하기 준비`);
+  }
+
+  function buildSeedPrompt(seed: string, selectedMood: string, selectedGenre: string, mode: string) {
+    return `새 세계를 엽니다.
+세계 씨앗: ${seed.trim() || "아직 정해지지 않음"}
+분위기: ${selectedMood}
+장르: ${selectedGenre}
+동반자 방식: ${mode}
+한국어로 아주 짧게 시작하세요. 사용자가 먼저 상상할 수 있게 긴 설명은 피하고, 이 설정을 바탕으로 첫 장면을 여는 질문 하나만 던져주세요.`;
   }
 
   function handleRealtimeMessage(raw: string) {
@@ -388,6 +405,25 @@ export default function App() {
         </div>
       </section>
 
+      <section className="seed-panel" aria-label="새 세계 설정">
+        <div className="panel-heading">
+          <p className="eyebrow">World seed</p>
+          <h2>새 세계 열기</h2>
+        </div>
+        <label className="seed-input">
+          세계 씨앗
+          <textarea
+            value={worldSeed}
+            onChange={(event) => setWorldSeed(event.target.value)}
+            placeholder="예: 비가 위로 내리는 항구 도시, 이름이 금지된 왕국"
+            rows={3}
+          />
+        </label>
+        <ChoiceButtons label="분위기" options={moodOptions} value={mood} onChange={setMood} />
+        <ChoiceButtons label="장르" options={genreOptions} value={genre} onChange={setGenre} />
+        <ChoiceButtons label="동반자 방식" options={companionModes} value={companionMode} onChange={setCompanionMode} />
+      </section>
+
       <section className="studio-grid">
         <section className="transcript-panel" aria-label="대화 transcript">
           <div className="panel-heading">
@@ -458,5 +494,30 @@ export default function App() {
         </article>
       </section>
     </main>
+  );
+}
+
+function ChoiceButtons({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="choice-row">
+      <span>{label}</span>
+      <div>
+        {options.map((option) => (
+          <button key={option} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
+            {option}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
