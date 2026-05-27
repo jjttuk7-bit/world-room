@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildSessionRecord, createSupabaseRepository, saveSessionRecord } from "./server.mjs";
+import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, saveSessionRecord } from "./server.mjs";
 
 describe("World Room 세션 저장", () => {
   it("transcript와 sparks를 Supabase 저장 record로 정리한다", async () => {
@@ -125,5 +125,27 @@ describe("World Room 세션 저장", () => {
         ["update", expect.objectContaining({ latest_session_id: "session-1" })],
       ]),
     );
+  });
+
+  it("Supabase repository는 저장된 세계를 삭제한다", async () => {
+    const query = {
+      delete: vi.fn(() => query),
+      eq: vi.fn(() => query),
+    };
+    const supabase = {
+      from: vi.fn(() => query),
+    };
+    const repository = createSupabaseRepository(supabase);
+
+    const result = await repository.deleteWorld("world-1");
+
+    expect(result).toEqual({ ok: true, worldId: "world-1" });
+    expect(supabase.from).toHaveBeenCalledWith("worlds");
+    expect(query.delete).toHaveBeenCalled();
+    expect(query.eq).toHaveBeenCalledWith("id", "world-1");
+  });
+
+  it("deleteWorldRecord는 빈 world id를 거절한다", async () => {
+    await expect(deleteWorldRecord("")).rejects.toThrow("삭제할 세계 ID가 없습니다.");
   });
 });

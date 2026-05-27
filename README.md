@@ -42,6 +42,7 @@ ALLOWED_ORIGIN=http://localhost:5173
 VITE_REALTIME_TOKEN_URL=/api/token
 VITE_SESSION_SAVE_URL=/api/sessions
 VITE_RECENT_WORLDS_URL=/api/worlds/recent
+VITE_WORLDS_URL=/api/worlds
 SUPABASE_URL=https://your-project.supabase.co
 # `SUPABASE_URL` 대신 Vercel/Supabase 템플릿의 `NEXT_PUBLIC_SUPABASE_URL`을 써도 됩니다.
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
@@ -63,7 +64,7 @@ npm run dev
 
 5. 브라우저에서 `http://localhost:5173`을 열고 **세션 시작**을 누릅니다.
 
-Vercel 배포에서는 `api/` 폴더의 serverless functions가 `/api/token`, `/api/sessions`, `/api/worlds/recent`를 제공합니다. Vercel 환경변수를 바꾼 뒤에는 반드시 Redeploy가 필요합니다.
+Vercel 배포에서는 `api/` 폴더의 serverless functions가 `/api/token`, `/api/sessions`, `/api/worlds/recent`, `/api/worlds/:id`를 제공합니다. Vercel 환경변수를 바꾼 뒤에는 반드시 Redeploy가 필요합니다.
 
 ## 역할 분리
 
@@ -77,13 +78,14 @@ Vercel 배포에서는 `api/` 폴더의 serverless functions가 `/api/token`, `/
 - 마이크 음소거와 세션 종료
 - 현재 세계를 `POST /sessions`로 저장 요청
 - 최근 세계 3개를 `/worlds/recent`에서 불러오고, 이어 말하기 컨텍스트를 선택
+- 저장된 세계를 `DELETE /worlds/:id`로 삭제 요청
 
 서버 책임:
 
 - `OPENAI_API_KEY` 보관
 - Realtime client secret 발급
 - 세션 저장 요청을 받아 Responses API로 요약한 뒤 Supabase `worlds`, `sessions`, `canon_cards`에 저장
-- 최근 세계 3개를 Supabase에서 조회
+- 최근 세계 3개를 Supabase에서 조회하고, 삭제 요청 시 `worlds` 행을 삭제
 - 모델, 음성, 지시문, VAD, 전사 모델 설정
 - `OpenAI-Safety-Identifier`를 서버에서 설정
 - 브라우저에 표준 API 키를 절대 전달하지 않음

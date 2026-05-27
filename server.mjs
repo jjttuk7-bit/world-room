@@ -48,7 +48,7 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN ?? "http://localhost:5173",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   });
   res.end(JSON.stringify(body));
@@ -348,6 +348,19 @@ export async function listRecentWorlds(limit = 3) {
   return repository.listRecentWorlds(limit);
 }
 
+export async function deleteWorldRecord(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) {
+    throw new Error("삭제할 세계 ID가 없습니다.");
+  }
+
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) {
+    throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  }
+  return repository.deleteWorld(cleanWorldId);
+}
+
 export function handleOptions(req, res) {
   if (req.method !== "OPTIONS") return false;
   sendJson(res, 204, {});
@@ -452,6 +465,11 @@ export function createSupabaseRepository(supabase) {
         updatedAt: world.updated_at,
       }));
     },
+
+    async deleteWorld(worldId) {
+      await assertNoError(await supabase.from("worlds").delete().eq("id", worldId));
+      return { ok: true, worldId };
+    },
   };
 }
 
@@ -493,6 +511,16 @@ export function createServer() {
       sendJson(res, 200, { worlds: await listRecentWorlds(3) });
     } catch (error) {
       sendJson(res, 500, { error: error instanceof Error ? error.message : "최근 세계를 불러오지 못했습니다." });
+    }
+    return;
+  }
+
+  const worldMatch = req.url?.match(/^\/worlds\/([^/?#]+)$/);
+  if (worldMatch && req.method === "DELETE") {
+    try {
+      sendJson(res, 200, await deleteWorldRecord(decodeURIComponent(worldMatch[1])));
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : "세계 삭제에 실패했습니다." });
     }
     return;
   }

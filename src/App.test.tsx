@@ -1,12 +1,15 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (url: string) => {
+    vi.fn(async (url: string, options?: RequestInit) => {
+      if (String(url).includes("/worlds/") && options?.method === "DELETE") {
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
       if (url.includes("/worlds/recent")) {
         return {
           ok: true,
@@ -38,7 +41,7 @@ describe("World Room 앱", () => {
 
     expect(screen.getByRole("heading", { name: "World Room" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /세션 시작/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /세계 저장/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "세계 저장" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "설정: 아직 비어 있는 지도" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "떠다니는 항구 도시를 같이 만들어보자." })).toBeDisabled();
     expect(screen.getByText("마이크 대기")).toBeInTheDocument();
@@ -46,8 +49,11 @@ describe("World Room 앱", () => {
     expect(screen.queryByText("API 키는 브라우저가 아니라 로컬 서버에만 둡니다.")).not.toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "최근 세계" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /안개 도시 삭제/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "새 세계 열기" })).toBeInTheDocument();
+    expect(screen.getByLabelText("세계 이름")).toHaveValue("");
     expect(screen.getByLabelText("세계 씨앗")).toHaveValue("");
+    expect(screen.getByRole("button", { name: /현재 세계 저장/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "몽환적" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "질문 위주" })).toHaveAttribute("aria-pressed", "true");
   });
@@ -66,5 +72,15 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: "어두운" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "미스터리" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "선택지 제안" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("저장된 세계를 삭제할 수 있다", async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 삭제/ }));
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1", { method: "DELETE" });
+    });
   });
 });

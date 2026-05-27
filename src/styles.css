@@ -178,6 +178,7 @@ li {
   text-transform: uppercase;
 }
 
+.seed-input input,
 .seed-input textarea {
   min-height: 78px;
   border: 1px solid var(--line);
@@ -190,6 +191,23 @@ li {
   line-height: 1.5;
 }
 
+.seed-input input {
+  min-height: 46px;
+}
+
+.seed-save-button {
+  justify-self: start;
+  min-height: 44px;
+  border: 1px solid rgba(232, 189, 101, 0.58);
+  border-radius: 8px;
+  background: var(--amber);
+  color: #201a10;
+  padding: 10px 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.seed-input input:focus,
 .seed-input textarea:focus,
 .choice-row button:focus-visible {
   outline: 2px solid rgba(232, 189, 101, 0.8);
@@ -284,6 +302,22 @@ li {
   color: var(--ink);
   font-weight: 800;
   cursor: pointer;
+}
+
+.world-card-actions {
+  display: grid;
+  gap: 8px;
+  align-self: end;
+}
+
+.world-card-actions button {
+  width: 100%;
+}
+
+.world-card-actions .danger-button {
+  border-color: rgba(216, 101, 77, 0.48);
+  background: rgba(216, 101, 77, 0.12);
+  color: #ffd8cf;
 }
 
 .primary-button,

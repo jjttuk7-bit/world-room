@@ -7,6 +7,7 @@ type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening"
 const tokenUrl = import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token";
 const sessionSaveUrl = import.meta.env.VITE_SESSION_SAVE_URL ?? "/api/sessions";
 const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? "/api/worlds/recent";
+const worldsUrl = import.meta.env.VITE_WORLDS_URL ?? "/api/worlds";
 
 type RecentWorld = {
   id: string;
@@ -57,6 +58,7 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [recentWorlds, setRecentWorlds] = useState<RecentWorld[]>([]);
   const [selectedWorld, setSelectedWorld] = useState<RecentWorld | null>(null);
+  const [worldTitle, setWorldTitle] = useState("");
   const [worldSeed, setWorldSeed] = useState("");
   const [mood, setMood] = useState(moodOptions[0]);
   const [genre, setGenre] = useState(genreOptions[0]);
@@ -275,13 +277,20 @@ export default function App() {
 
     try {
       const firstUserLine = transcript.find((line) => line.speaker === "사용자" && line.text.trim());
+      const setupSparks = [
+        worldSeed.trim() ? `설정: ${worldSeed.trim()}` : "",
+        `분위기: ${mood}`,
+        `장르: ${genre}`,
+        `동반자 방식: ${companionMode}`,
+      ].filter(Boolean);
       const response = await fetch(sessionSaveUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: firstUserLine?.text ?? "World Room 세션",
+          title: worldTitle.trim() || firstUserLine?.text || selectedWorld?.title || "World Room 세션",
+          worldId: selectedWorld?.id,
           transcript,
-          sparks,
+          sparks: [...setupSparks, ...sparks],
         }),
       });
       const result = await response.json();
@@ -304,8 +313,31 @@ export default function App() {
     setStatusText(`${world.title} 이어 말하기 준비`);
   }
 
+  async function deleteWorld(world: RecentWorld) {
+    setError("");
+    setSaveStatus(`${world.title} 삭제 중`);
+
+    try {
+      const response = await fetch(`${worldsUrl}/${encodeURIComponent(world.id)}`, { method: "DELETE" });
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error ?? "세계 삭제에 실패했습니다.");
+      }
+      setRecentWorlds((current) => current.filter((item) => item.id !== world.id));
+      if (selectedWorld?.id === world.id) {
+        setSelectedWorld(null);
+      }
+      setSaveStatus(`삭제 완료: ${world.title}`);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "세계 삭제에 실패했습니다.";
+      setError(message);
+      setSaveStatus("");
+    }
+  }
+
   function buildSeedPrompt(seed: string, selectedMood: string, selectedGenre: string, mode: string) {
     return `새 세계를 엽니다.
+세계 이름: ${worldTitle.trim() || "아직 정해지지 않음"}
 세계 씨앗: ${seed.trim() || "아직 정해지지 않음"}
 분위기: ${selectedMood}
 장르: ${selectedGenre}
@@ -392,7 +424,12 @@ export default function App() {
                 <span>{world.updatedAt ? new Date(world.updatedAt).toLocaleString("ko-KR") : "최근 저장"}</span>
                 <h3>{world.title}</h3>
                 <p>{world.summary}</p>
-                <button onClick={() => continueWorld(world)}>{world.title} 이어 말하기</button>
+                <div className="world-card-actions">
+                  <button onClick={() => continueWorld(world)}>{world.title} 이어 말하기</button>
+                  <button className="danger-button" onClick={() => void deleteWorld(world)}>
+                    {world.title} 삭제
+                  </button>
+                </div>
               </article>
             ))
           ) : (
@@ -411,6 +448,14 @@ export default function App() {
           <h2>새 세계 열기</h2>
         </div>
         <label className="seed-input">
+          세계 이름
+          <input
+            value={worldTitle}
+            onChange={(event) => setWorldTitle(event.target.value)}
+            placeholder="예: 거꾸로 비가 내리는 항구"
+          />
+        </label>
+        <label className="seed-input">
           세계 씨앗
           <textarea
             value={worldSeed}
@@ -422,6 +467,9 @@ export default function App() {
         <ChoiceButtons label="분위기" options={moodOptions} value={mood} onChange={setMood} />
         <ChoiceButtons label="장르" options={genreOptions} value={genre} onChange={setGenre} />
         <ChoiceButtons label="동반자 방식" options={companionModes} value={companionMode} onChange={setCompanionMode} />
+        <button className="seed-save-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>
+          {isSaving ? "저장 중" : "현재 세계 저장"}
+        </button>
       </section>
 
       <section className="studio-grid">
