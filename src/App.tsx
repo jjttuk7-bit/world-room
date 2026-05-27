@@ -4,9 +4,9 @@ import type { RealtimeSignal, TranscriptLine } from "./realtime/events";
 
 type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening" | "speaking" | "recovering" | "ended" | "error";
 
-const tokenUrl = import.meta.env.VITE_REALTIME_TOKEN_URL ?? "http://localhost:8787/token";
-const sessionSaveUrl = import.meta.env.VITE_SESSION_SAVE_URL ?? tokenUrl.replace(/\/token$/, "/sessions");
-const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? tokenUrl.replace(/\/token$/, "/worlds/recent");
+const tokenUrl = import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token";
+const sessionSaveUrl = import.meta.env.VITE_SESSION_SAVE_URL ?? "/api/sessions";
+const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? "/api/worlds/recent";
 
 type RecentWorld = {
   id: string;

@@ -39,16 +39,16 @@ OPENAI_REALTIME_VOICE=marin
 OPENAI_SUMMARY_MODEL=gpt-5.4-mini
 PORT=8787
 ALLOWED_ORIGIN=http://localhost:5173
-VITE_REALTIME_TOKEN_URL=http://localhost:8787/token
-VITE_SESSION_SAVE_URL=http://localhost:8787/sessions
-VITE_RECENT_WORLDS_URL=http://localhost:8787/worlds/recent
+VITE_REALTIME_TOKEN_URL=/api/token
+VITE_SESSION_SAVE_URL=/api/sessions
+VITE_RECENT_WORLDS_URL=/api/worlds/recent
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
 Supabase SQL Editor에서 `supabase/schema.sql`을 실행해 `worlds`, `sessions`, `canon_cards` 테이블을 만듭니다.
 
-3. 터미널 1에서 토큰 서버를 실행합니다.
+3. 로컬 개발에서는 터미널 1에서 토큰 서버를 실행합니다.
 
 ```bash
 npm run server
@@ -61,6 +61,8 @@ npm run dev
 ```
 
 5. 브라우저에서 `http://localhost:5173`을 열고 **세션 시작**을 누릅니다.
+
+Vercel 배포에서는 `api/` 폴더의 serverless functions가 `/api/token`, `/api/sessions`, `/api/worlds/recent`를 제공합니다. Vercel 환경변수를 바꾼 뒤에는 반드시 Redeploy가 필요합니다.
 
 ## 역할 분리
 

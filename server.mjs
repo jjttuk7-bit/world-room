@@ -73,7 +73,7 @@ function safetyIdentifier() {
   return createHash("sha256").update(process.env.WORLD_ROOM_USER_ID ?? "world-room-local-user").digest("hex");
 }
 
-async function createClientSecret() {
+export async function createClientSecret() {
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
   }
@@ -113,7 +113,7 @@ async function createClientSecret() {
   return data;
 }
 
-function readRequestJson(req) {
+export function readRequestJson(req) {
   return new Promise((resolve, reject) => {
     let body = "";
     req.setEncoding("utf8");
@@ -340,6 +340,22 @@ export async function saveSessionRecord(payload, options = {}) {
   return repository.saveSession(record);
 }
 
+export async function listRecentWorlds(limit = 3) {
+  const repository = createDefaultRepository();
+  if (!repository) {
+    throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  }
+  return repository.listRecentWorlds(limit);
+}
+
+export function handleOptions(req, res) {
+  if (req.method !== "OPTIONS") return false;
+  sendJson(res, 204, {});
+  return true;
+}
+
+export { sendJson };
+
 export function createSupabaseRepository(supabase) {
   async function assertNoError(result) {
     if (result?.error) {
@@ -474,11 +490,7 @@ export function createServer() {
 
   if (req.url === "/worlds/recent" && req.method === "GET") {
     try {
-      const repository = createDefaultRepository();
-      if (!repository) {
-        throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
-      }
-      sendJson(res, 200, { worlds: await repository.listRecentWorlds(3) });
+      sendJson(res, 200, { worlds: await listRecentWorlds(3) });
     } catch (error) {
       sendJson(res, 500, { error: error instanceof Error ? error.message : "최근 세계를 불러오지 못했습니다." });
     }
