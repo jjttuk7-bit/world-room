@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { appendTranscriptLine, reduceRealtimeEvent } from "./realtime/events";
 import type { RealtimeSignal, TranscriptLine } from "./realtime/events";
 
@@ -6,6 +6,15 @@ type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening"
 
 const tokenUrl = import.meta.env.VITE_REALTIME_TOKEN_URL ?? "http://localhost:8787/token";
 const sessionSaveUrl = import.meta.env.VITE_SESSION_SAVE_URL ?? tokenUrl.replace(/\/token$/, "/sessions");
+const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? tokenUrl.replace(/\/token$/, "/worlds/recent");
+
+type RecentWorld = {
+  id: string;
+  title: string;
+  summary: string;
+  continuityBrief: string;
+  updatedAt?: string;
+};
 
 const openingPrompts = [
   "떠다니는 항구 도시를 같이 만들어보자.",
@@ -42,6 +51,8 @@ export default function App() {
   const [saveStatus, setSaveStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [recentWorlds, setRecentWorlds] = useState<RecentWorld[]>([]);
+  const [selectedWorld, setSelectedWorld] = useState<RecentWorld | null>(null);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -64,6 +75,21 @@ export default function App() {
   }, [sessionState]);
 
   const canSaveWorld = transcript.some((line) => line.speaker === "사용자" || line.speaker === "동반자");
+
+  useEffect(() => {
+    void loadRecentWorlds();
+  }, []);
+
+  async function loadRecentWorlds() {
+    try {
+      const response = await fetch(recentWorldsUrl);
+      if (!response.ok) return;
+      const result = await response.json();
+      setRecentWorlds((result.worlds ?? []).slice(0, 3));
+    } catch {
+      setRecentWorlds([]);
+    }
+  }
 
   async function startSession() {
     if (sessionState === "requesting" || sessionState === "connecting") return;
@@ -204,7 +230,9 @@ export default function App() {
           content: [
             {
               type: "input_text",
-              text: "한국어로 짧게 인사하고, 내가 말로 세계를 만들 수 있게 첫 질문 하나를 던져줘.",
+              text: selectedWorld
+                ? `이전 세계를 이어갑니다. 제목: ${selectedWorld.title}\n기억 요약: ${selectedWorld.continuityBrief}\n한국어로 짧게 반갑게 맞이하고, 지난 세계의 다음 장면으로 들어가는 질문 하나를 던져줘.`
+                : "한국어로 짧게 인사하고, 내가 말로 세계를 만들 수 있게 첫 질문 하나를 던져줘.",
             },
           ],
         },
@@ -252,6 +280,7 @@ export default function App() {
         throw new Error(result.error ?? "세션 저장에 실패했습니다.");
       }
       setSaveStatus(`저장 완료: ${result.path}`);
+      await loadRecentWorlds();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "세션 저장에 실패했습니다.";
       setError(message);
@@ -259,6 +288,11 @@ export default function App() {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function continueWorld(world: RecentWorld) {
+    setSelectedWorld(world);
+    setStatusText(`${world.title} 이어 말하기 준비`);
   }
 
   function handleRealtimeMessage(raw: string) {
@@ -324,6 +358,31 @@ export default function App() {
         <div className="connection-note">
           <span>{tokenUrl}</span>
           <strong>{error || saveStatus || "API 키는 브라우저가 아니라 로컬 서버에만 둡니다."}</strong>
+        </div>
+      </section>
+
+      <section className="recent-worlds" aria-label="최근 저장한 세계">
+        <div className="panel-heading">
+          <p className="eyebrow">Saved worlds</p>
+          <h2>최근 세계</h2>
+        </div>
+        <div className="world-card-grid">
+          {recentWorlds.length ? (
+            recentWorlds.map((world) => (
+              <article className={selectedWorld?.id === world.id ? "world-card selected" : "world-card"} key={world.id}>
+                <span>{world.updatedAt ? new Date(world.updatedAt).toLocaleString("ko-KR") : "최근 저장"}</span>
+                <h3>{world.title}</h3>
+                <p>{world.summary}</p>
+                <button onClick={() => continueWorld(world)}>{world.title} 이어 말하기</button>
+              </article>
+            ))
+          ) : (
+            <article className="world-card empty">
+              <span>아직 저장된 세계가 없습니다</span>
+              <h3>첫 세계를 말로 열어보세요</h3>
+              <p>대화가 생긴 뒤 세계 저장을 누르면 최근 세계 카드가 여기에 나타납니다.</p>
+            </article>
+          )}
         </div>
       </section>
 

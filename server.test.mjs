@@ -1,25 +1,11 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { buildSessionRecord, saveSessionRecord } from "./server.mjs";
-
-const tempDirs = [];
-
-afterEach(async () => {
-  await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
-  tempDirs.length = 0;
-});
-
-async function makeTempDir() {
-  const dir = await mkdtemp(join(tmpdir(), "world-room-"));
-  tempDirs.push(dir);
-  return dir;
-}
+import { describe, expect, it, vi } from "vitest";
+import { buildSessionRecord, createSupabaseRepository, saveSessionRecord } from "./server.mjs";
 
 describe("World Room 세션 저장", () => {
-  it("transcript와 sparks를 sessions JSON 파일로 저장한다", async () => {
-    const sessionsDir = await makeTempDir();
+  it("transcript와 sparks를 Supabase 저장 record로 정리한다", async () => {
+    const repository = {
+      saveSession: vi.fn(async (record) => ({ ok: true, path: `supabase/worlds/${record.world.id}` })),
+    };
 
     const result = await saveSessionRecord(
       {
@@ -31,32 +17,53 @@ describe("World Room 세션 저장", () => {
         sparks: ["설정: 비가 거꾸로 오는 도시"],
       },
       {
-        sessionsDir,
+        repository,
         model: "gpt-realtime-2",
         voice: "marin",
         now: new Date("2026-05-27T18:33:21+09:00"),
+        summarize: async () => ({
+          title: "나는 도시",
+          summary: "비가 거꾸로 오는 도시를 만들었다.",
+          canonUpdates: {
+            settings: ["비가 거꾸로 온다."],
+            characters: [],
+            conflicts: [],
+            sceneHooks: [],
+          },
+          nextQuestions: ["도시는 왜 비를 거슬러 올리나요?"],
+          continuityBrief: "비가 거꾸로 오는 도시에서 이어간다.",
+        }),
       },
     );
 
     expect(result).toEqual({
       ok: true,
-      path: "sessions/20260527-183321-world-room.json",
+      path: "supabase/worlds/world-20260527-183321",
     });
-
-    const saved = JSON.parse(await readFile(join(sessionsDir, "20260527-183321-world-room.json"), "utf8"));
-    expect(saved).toMatchObject({
-      id: "20260527-183321-world-room",
-      title: "나는 도시",
-      model: "gpt-realtime-2",
-      voice: "marin",
-      transcript: [
-        { id: "1", speaker: "사용자", text: "나는 도시", final: true },
-        { id: "2", speaker: "동반자", text: "설정: 비가 거꾸로 오는 도시", final: true },
+    expect(repository.saveSession).toHaveBeenCalledWith({
+      world: expect.objectContaining({
+        id: "world-20260527-183321",
+        title: "나는 도시",
+        summary: "비가 거꾸로 오는 도시를 만들었다.",
+        continuityBrief: "비가 거꾸로 오는 도시에서 이어간다.",
+      }),
+      session: expect.objectContaining({
+        id: "20260527-183321-world-room",
+        worldId: "world-20260527-183321",
+        title: "나는 도시",
+        summary: "비가 거꾸로 오는 도시를 만들었다.",
+        nextQuestions: ["도시는 왜 비를 거슬러 올리나요?"],
+      }),
+      canonCards: [
+        expect.objectContaining({
+          type: "setting",
+          title: "비가 거꾸로 온다.",
+          content: "비가 거꾸로 온다.",
+        }),
       ],
-      sparks: ["설정: 비가 거꾸로 오는 도시"],
     });
-    expect(JSON.stringify(saved)).not.toContain("sk-");
-    expect(JSON.stringify(saved)).not.toContain("client_secret");
+    expect(JSON.stringify(repository.saveSession.mock.calls)).not.toContain("sk-");
+    expect(JSON.stringify(repository.saveSession.mock.calls)).not.toContain("client_secret");
   });
 
   it("저장할 사용자/동반자 transcript가 없으면 거절한다", () => {
@@ -74,5 +81,49 @@ describe("World Room 세션 저장", () => {
         },
       ),
     ).toThrow("저장할 대화 기록이 없습니다.");
+  });
+
+  it("Supabase repository는 worlds, sessions, canon_cards를 저장한다", async () => {
+    const calls = [];
+    const query = {
+      upsert: vi.fn((value) => {
+        calls.push(["upsert", value]);
+        return query;
+      }),
+      insert: vi.fn((value) => {
+        calls.push(["insert", value]);
+        return query;
+      }),
+      update: vi.fn((value) => {
+        calls.push(["update", value]);
+        return query;
+      }),
+      eq: vi.fn(() => query),
+      select: vi.fn(() => query),
+      limit: vi.fn(() => query),
+      order: vi.fn(() => query),
+    };
+    const supabase = {
+      from: vi.fn(() => query),
+    };
+    const repository = createSupabaseRepository(supabase);
+
+    await repository.saveSession({
+      world: { id: "world-1", title: "세계", summary: "요약", continuityBrief: "기억", latestSessionId: "session-1" },
+      session: { id: "session-1", worldId: "world-1", title: "세션", transcript: [], sparks: [], summary: "요약", nextQuestions: [] },
+      canonCards: [{ id: "card-1", worldId: "world-1", type: "setting", title: "설정", content: "설정", sourceSessionId: "session-1" }],
+    });
+
+    expect(supabase.from).toHaveBeenCalledWith("worlds");
+    expect(supabase.from).toHaveBeenCalledWith("sessions");
+    expect(supabase.from).toHaveBeenCalledWith("canon_cards");
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        ["upsert", expect.objectContaining({ id: "world-1", continuity_brief: "기억" })],
+        ["upsert", expect.objectContaining({ id: "session-1", world_id: "world-1" })],
+        ["insert", [expect.objectContaining({ id: "card-1", world_id: "world-1", type: "setting" })]],
+        ["update", expect.objectContaining({ latest_session_id: "session-1" })],
+      ]),
+    );
   });
 });

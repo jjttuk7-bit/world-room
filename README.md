@@ -36,11 +36,17 @@ copy .env.example .env
 OPENAI_API_KEY=sk-...
 OPENAI_REALTIME_MODEL=gpt-realtime-2
 OPENAI_REALTIME_VOICE=marin
+OPENAI_SUMMARY_MODEL=gpt-5.4-mini
 PORT=8787
 ALLOWED_ORIGIN=http://localhost:5173
 VITE_REALTIME_TOKEN_URL=http://localhost:8787/token
 VITE_SESSION_SAVE_URL=http://localhost:8787/sessions
+VITE_RECENT_WORLDS_URL=http://localhost:8787/worlds/recent
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
+
+Supabase SQL Editor에서 `supabase/schema.sql`을 실행해 `worlds`, `sessions`, `canon_cards` 테이블을 만듭니다.
 
 3. 터미널 1에서 토큰 서버를 실행합니다.
 
@@ -67,12 +73,14 @@ npm run dev
 - transcript, 세션 상태, 오류, 세계 단서 표시
 - 마이크 음소거와 세션 종료
 - 현재 세계를 `POST /sessions`로 저장 요청
+- 최근 세계 3개를 `/worlds/recent`에서 불러오고, 이어 말하기 컨텍스트를 선택
 
 서버 책임:
 
 - `OPENAI_API_KEY` 보관
 - Realtime client secret 발급
-- 세션 저장 요청을 받아 `sessions/*.json` 파일 생성
+- 세션 저장 요청을 받아 Responses API로 요약한 뒤 Supabase `worlds`, `sessions`, `canon_cards`에 저장
+- 최근 세계 3개를 Supabase에서 조회
 - 모델, 음성, 지시문, VAD, 전사 모델 설정
 - `OpenAI-Safety-Identifier`를 서버에서 설정
 - 브라우저에 표준 API 키를 절대 전달하지 않음
@@ -115,7 +123,9 @@ npm run dev
 - 네트워크를 끊거나 새로고침한 뒤 세션을 다시 시작할 수 있다.
 - `마이크 끄기`가 로컬 오디오 트랙을 비활성화한다.
 - `세션 종료` 후 마이크 사용 표시가 사라진다.
-- 대화가 생긴 뒤 `세계 저장`을 누르면 `sessions/YYYYMMDD-HHMMSS-world-room.json` 파일이 생성된다.
+- 대화가 생긴 뒤 `세계 저장`을 누르면 Supabase에 세계/세션/카드가 저장된다.
+- 앱 시작 시 최근 세계 3개가 카드로 표시된다.
+- 최근 세계 카드의 `이어 말하기`를 누르면 다음 세션 시작 프롬프트에 `continuity_brief`가 포함된다.
 
 ## 확인 명령
 
