@@ -17,13 +17,6 @@ type RecentWorld = {
   updatedAt?: string;
 };
 
-const openingPrompts = [
-  "떠다니는 항구 도시를 같이 만들어보자.",
-  "눈이 내리는 사막 왕국에서 첫 장면을 열어줘.",
-  "주인공에게 이상한 결핍 하나를 줘.",
-  "평화로운 마을에 오늘 터질 갈등을 만들어줘.",
-];
-
 const moodOptions = ["몽환적", "어두운", "따뜻한", "기묘한", "모험적"];
 const genreOptions = ["판타지", "SF", "미스터리", "호러", "동화", "동양풍"];
 const companionModes = ["질문 위주", "선택지 제안", "장면 묘사", "인물 중심"];
@@ -47,11 +40,7 @@ export default function App() {
       final: true,
     },
   ]);
-  const [sparks, setSparks] = useState<string[]>([
-    "설정: 아직 비어 있는 지도",
-    "인물: 이름을 기다리는 주인공",
-    "갈등: 첫 질문이 세계의 방향을 정합니다",
-  ]);
+  const [sparks, setSparks] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -495,31 +484,21 @@ export default function App() {
               <h2>세계 단서</h2>
             </div>
             <div className="spark-list">
-              {sparks.map((spark) => (
-                <button
-                  key={spark}
-                  onClick={() => sendTextPrompt(`${spark}를 바탕으로 다음 질문을 하나 던져줘.`)}
-                  disabled={!isRealtimeReady}
-                >
-                  {spark}
-                </button>
-              ))}
+              {sparks.length ? (
+                sparks.map((spark) => (
+                  <button
+                    key={spark}
+                    onClick={() => sendTextPrompt(`${spark}를 바탕으로 다음 질문을 하나 던져줘.`)}
+                    disabled={!isRealtimeReady}
+                  >
+                    {spark}
+                  </button>
+                ))
+              ) : (
+                <p className="empty-panel-copy">아직 세계 단서가 없습니다.</p>
+              )}
             </div>
             {!isRealtimeReady && <p className="panel-hint">세션이 연결되면 세계 단서를 대화에 다시 던질 수 있습니다.</p>}
-          </section>
-
-          <section className="prompt-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">Quick prompts</p>
-              <h2>장면 열기</h2>
-            </div>
-            <div className="prompt-grid">
-              {openingPrompts.map((prompt) => (
-                <button key={prompt} onClick={() => sendTextPrompt(prompt)} disabled={!isRealtimeReady}>
-                  {prompt}
-                </button>
-              ))}
-            </div>
           </section>
         </aside>
       </section>
