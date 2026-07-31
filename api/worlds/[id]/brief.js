@@ -1,8 +1,13 @@
 import { ApiError, getCurrentCreativeBrief, handleOptions, readRequestJson, saveCreativeBrief, sendApiError, sendJson } from "../../../server.mjs";
 
+function worldIdFor(req) {
+  const value = Array.isArray(req.query?.id) ? req.query.id[0] : req.query?.id;
+  return String(value ?? req.url?.match(/^\/api\/worlds\/([^/?#]+)\/brief/)?.[1] ?? "").trim();
+}
+
 export default async function handler(req, res) {
   if (handleOptions(req, res)) return;
-  const worldId = req.query?.id;
+  const worldId = worldIdFor(req);
   try {
     if (req.method === "GET") { sendJson(res, 200, await getCurrentCreativeBrief(worldId)); return; }
     if (req.method === "POST") {

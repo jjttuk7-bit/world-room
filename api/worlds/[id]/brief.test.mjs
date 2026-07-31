@@ -27,6 +27,22 @@ describe("현재 창작 브리프 API 계약", () => {
     expect(server.getCurrentCreativeBrief).toHaveBeenCalledWith("world-1");
     expect(server.sendJson).toHaveBeenCalledWith(res, 200, { worldId: "world-1", brief });
   });
+  it("GET은 배열 경로 파라미터의 첫 세계 ID만 사용한다", async () => {
+    server.getCurrentCreativeBrief.mockResolvedValue({ worldId: "world-1", brief: null });
+    const res = response();
+
+    await handler({ method: "GET", query: { id: ["world-1", "ignored"] } }, res);
+
+    expect(server.getCurrentCreativeBrief).toHaveBeenCalledWith("world-1");
+  });
+  it("GET은 로컬 URL에서 세계 ID를 찾아 사용한다", async () => {
+    server.getCurrentCreativeBrief.mockResolvedValue({ worldId: "world-local", brief: null });
+    const res = response();
+
+    await handler({ method: "GET", url: "/api/worlds/world-local/brief?preview=1" }, res);
+
+    expect(server.getCurrentCreativeBrief).toHaveBeenCalledWith("world-local");
+  });
   it("POST는 approved가 boolean true인 브리프만 저장한다", async () => {
     const payload = { approved: true, intent: "잃어버린 지도를 찾는다.", conflict: "도시는 지도를 금지한다.", tone: "고요하고 불길하게", requiredElements: ["역류하는 비"], sessionGoal: "첫 선택을 찾는다." };
     server.readRequestJson.mockResolvedValue(payload);
