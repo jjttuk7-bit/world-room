@@ -154,6 +154,49 @@ describe("World Room 앱", () => {
     expect(screen.getByText("장면 초안은 대화가 충분히 쌓인 뒤 만들 수 있습니다.")).toBeInTheDocument();
   });
 
+  it("새 대화를 저장하면 저장된 세계를 바로 선택해 장면 초안을 만들 수 있다", async () => {
+    let channel: EventTarget & { readyState: string; send: ReturnType<typeof vi.fn> } | undefined;
+    class FakePeerConnection {
+      connectionState = "new";
+      ontrack: ((event: { streams: MediaStream[] }) => void) | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      addTrack = vi.fn();
+      createDataChannel() {
+        channel = Object.assign(new EventTarget(), { readyState: "open", send: vi.fn() });
+        return channel as unknown as RTCDataChannel;
+      }
+      async createOffer() { return { type: "offer" as const, sdp: "offer" }; }
+      async setLocalDescription() {}
+      async setRemoteDescription() {}
+      close() {}
+    }
+    vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getAudioTracks: () => [{ enabled: true }], getTracks: () => [] })) },
+    });
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/token") return { ok: true, json: async () => ({ value: "ephemeral-key" }) } as Response;
+      if (url === "https://api.openai.com/v1/realtime/calls") return { ok: true, text: async () => "answer" } as Response;
+      if (url === "/api/sessions" && options?.method === "POST") return { ok: true, json: async () => ({ ok: true, path: "supabase/worlds/world-saved", worldId: "world-saved", sessionId: "session-saved" }) } as Response;
+      if (url.includes("/worlds/recent")) return { ok: true, json: async () => ({ worlds: [] }) } as Response;
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "대화 시작" }));
+    await waitFor(() => expect(channel).toBeDefined());
+    channel?.dispatchEvent(new Event("open"));
+    channel?.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "conversation.item.input_audio_transcription.completed", transcript: "안개 속 항구의 사공은 사라진 지도를 찾아야 합니다." }) }));
+    channel?.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "response.audio_transcript.done", transcript: "설정: 항구의 물길은 매일 밤 다른 기억을 품습니다." }) }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "세계 저장" })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("button", { name: "세계 저장" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "장면 초안 만들기" })).toBeEnabled());
+    expect(screen.queryByText("저장한 세계를 이어가면 장면 초안을 기록할 수 있습니다.")).not.toBeInTheDocument();
+  });
   it("저장된 원고를 순서대로 보여주고 세계 성경을 유형별 근거와 함께 묶는다", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "보관함" }));

@@ -129,14 +129,17 @@ export default function App() {
     }
   }, [seedOpen]);
 
-  async function loadRecentWorlds() {
+  async function loadRecentWorlds(): Promise<RecentWorld[]> {
     try {
       const response = await fetch(recentWorldsUrl);
-      if (!response.ok) return;
+      if (!response.ok) return [];
       const result = await response.json();
-      setRecentWorlds((result.worlds ?? []).slice(0, 3));
+      const worlds = (result.worlds ?? []).slice(0, 3) as RecentWorld[];
+      setRecentWorlds(worlds);
+      return worlds;
     } catch {
       setRecentWorlds([]);
+      return [];
     }
   }
 
@@ -340,11 +343,12 @@ export default function App() {
         `장르: ${genre}`,
         `동반자 방식: ${companionMode}`,
       ].filter(Boolean);
+      const title = worldTitle.trim() || firstUserLine?.text || selectedWorld?.title || "World Room 세션";
       const response = await fetch(sessionSaveUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: worldTitle.trim() || firstUserLine?.text || selectedWorld?.title || "World Room 세션",
+          title,
           worldId: selectedWorld?.id,
           transcript,
           sparks: [...setupSparks, ...sparks],
@@ -355,7 +359,20 @@ export default function App() {
         throw new Error(result.error ?? "세션 저장에 실패했습니다.");
       }
       setSaveStatus(`저장 완료: ${result.path}`);
-      await loadRecentWorlds();
+      const savedWorldId = String(result.worldId ?? selectedWorld?.id ?? "");
+      const recent = await loadRecentWorlds();
+      if (savedWorldId) {
+        const savedWorld = recent.find((world) => world.id === savedWorldId) ?? {
+          id: savedWorldId,
+          title: String(result.world?.title ?? title),
+          summary: String(result.world?.summary ?? selectedWorld?.summary ?? ""),
+          continuityBrief: String(result.world?.continuityBrief ?? selectedWorld?.continuityBrief ?? ""),
+          updatedAt: new Date().toISOString(),
+          latestSessionId: String(result.sessionId ?? result.world?.latestSessionId ?? selectedWorld?.latestSessionId ?? ""),
+        };
+        setSelectedWorld(savedWorld);
+        await loadStoryWorkspace(savedWorld.id);
+      }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "세션 저장에 실패했습니다.";
       setError(message);
