@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { acceptDraft, createRevision, holdDraft, type StoryDraft, type StoryScene } from "./models";
+import {
+  acceptDraft,
+  createRevision,
+  holdDraft,
+  storyDraftStatuses,
+  type StoryDraft,
+  type StoryScene,
+} from "./models";
 
 const proposedDraft: StoryDraft = {
   id: "draft-1",
@@ -10,6 +17,11 @@ const proposedDraft: StoryDraft = {
 };
 
 describe("이야기 초안 상태", () => {
+  it("초안은 전체 수명 주기 상태 집합만 사용한다", () => {
+    expect(storyDraftStatuses).toEqual(["proposed", "revising", "held", "accepted", "superseded"]);
+    expect(new Set(storyDraftStatuses).size).toBe(storyDraftStatuses.length);
+  });
+
   it("제안된 초안을 보류 상태로 바꾸되 원본은 유지한다", () => {
     const held = holdDraft(proposedDraft);
 
@@ -80,6 +92,24 @@ describe("이야기 초안 상태", () => {
     const acceptedDraft: StoryDraft = { ...proposedDraft, status: "accepted" };
 
     expect(() => acceptDraft(acceptedDraft, [], "2026-07-31T01:00:00.000Z")).toThrow(
+      "already accepted",
+    );
+  });
+
+  it("오래된 제안 초안도 이미 장면이 있으면 다시 채택할 수 없다", () => {
+    const staleDraft: StoryDraft = { ...proposedDraft, status: "proposed" };
+    const scenes: StoryScene[] = [
+      {
+        id: "scene-draft-1",
+        worldId: "world-1",
+        draftId: "draft-1",
+        content: proposedDraft.content,
+        order: 1,
+        acceptedAt: "2026-07-31T01:00:00.000Z",
+      },
+    ];
+
+    expect(() => acceptDraft(staleDraft, scenes, "2026-07-31T02:00:00.000Z")).toThrow(
       "already accepted",
     );
   });

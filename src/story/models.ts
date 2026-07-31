@@ -1,4 +1,6 @@
-export type StoryDraftStatus = "proposed" | "revising" | "held" | "accepted" | "superseded";
+export const storyDraftStatuses = ["proposed", "revising", "held", "accepted", "superseded"] as const;
+
+export type StoryDraftStatus = (typeof storyDraftStatuses)[number];
 
 export type StoryDraftRequest = {
   worldId: string;
@@ -40,7 +42,7 @@ export function acceptDraft(
   acceptedScenes: StoryScene[],
   acceptedAt: string,
 ): { draft: StoryDraft; scene: StoryScene } {
-  if (draft.status === "accepted") {
+  if (draft.status === "accepted" || acceptedScenes.some((scene) => scene.draftId === draft.id)) {
     throw new Error(`Draft ${draft.id} is already accepted`);
   }
 
