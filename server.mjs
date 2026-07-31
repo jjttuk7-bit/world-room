@@ -511,74 +511,42 @@ export function createSupabaseRepository(supabase) {
         parentDraftId: parent.id,
         createdAt,
       };
+      await assertNoError(
+        await supabase
+          .from("story_drafts")
+          .update({ status: "revising" })
+          .eq("world_id", worldId)
+          .eq("id", draftId),
+      );
       await this.insertStoryDraft(created);
       return created;
     },
 
     async acceptStoryDraft(worldId, draftId, acceptedAt = new Date().toISOString()) {
-      const draftResult = await assertNoError(
-        await supabase
-          .from("story_drafts")
-          .select("id,world_id,title,body,status,source_transcript_ids,related_canon_ids")
-          .eq("world_id", worldId)
-          .eq("id", draftId)
-          .single(),
-      );
-      const draft = draftResult.data;
-      if (!draft) {
-        throw new Error("채택할 초안을 찾을 수 없습니다.");
-      }
-      if (!new Set(["proposed", "revising"]).has(draft.status)) {
-        throw new Error(draft.status === "accepted" ? "이미 채택된 초안입니다." : "채택할 수 없는 초안입니다.");
-      }
-
-      const latestResult = await assertNoError(
-        await supabase
-          .from("story_scenes")
-          .select("sequence")
-          .eq("world_id", worldId)
-          .order("sequence", { ascending: false }),
-      );
-      const order = (latestResult.data ?? []).reduce(
-        (highest, scene) => Math.max(highest, Number(scene.sequence) || 0),
-        0,
-      ) + 1;
-      const scene = {
-        id: `scene-${draft.id}`,
-        worldId,
-        draftId: draft.id,
-        title: draft.title,
-        content: draft.body,
-        order,
-        acceptedAt,
-        sourceTranscriptIds: [...(draft.source_transcript_ids ?? [])],
-        relatedCanonIds: [...(draft.related_canon_ids ?? [])],
-      };
-
-      await assertNoError(
-        await supabase.from("story_scenes").insert({
-          id: scene.id,
-          world_id: scene.worldId,
-          draft_id: scene.draftId,
-          title: scene.title,
-          content: scene.content,
-          sequence: scene.order,
-          status: "accepted",
-          accepted_at: scene.acceptedAt,
-          source_transcript_ids: scene.sourceTranscriptIds,
-          related_canon_ids: scene.relatedCanonIds,
+      const result = await assertNoError(
+        await supabase.rpc("accept_story_draft", {
+          p_world_id: worldId,
+          p_draft_id: draftId,
+          p_scene_id: `scene-${draftId}`,
+          p_accepted_at: acceptedAt,
         }),
       );
-      await assertNoError(
-        await supabase
-          .from("story_drafts")
-          .update({ status: "accepted" })
-          .eq("world_id", worldId)
-          .eq("id", draftId),
-      );
-      return scene;
+      const scene = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!scene) {
+        throw new Error("초안 채택 결과를 찾을 수 없습니다.");
+      }
+      return {
+        id: scene.id,
+        worldId: scene.world_id,
+        draftId: scene.draft_id,
+        title: scene.title,
+        content: scene.content,
+        order: scene.sequence,
+        acceptedAt: scene.accepted_at,
+        sourceTranscriptIds: [...(scene.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(scene.related_canon_ids ?? [])],
+      };
     },
-
     async listWorldManuscript(worldId) {
       const result = await assertNoError(
         await supabase

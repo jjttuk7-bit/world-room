@@ -198,19 +198,11 @@ describe("비공개 이야기 작업실 저장소", () => {
     });
   });
 
-  it("수정은 같은 세계의 부모 초안을 조회해 출처를 보존한 새 버전을 만든다", async () => {
-    const parentQuery = createQuery({
-      data: {
-        id: "draft-1",
-        world_id: "world-1",
-        session_id: "session-1",
-        source_transcript_ids: ["line-1", "line-2"],
-        related_canon_ids: ["canon-1"],
-      },
-      error: null,
-    });
+  it("수정은 부모를 revising으로 바꾸고 출처를 보존한 새 버전을 만든다", async () => {
+    const parentQuery = createQuery({ data: { id: "draft-1", world_id: "world-1", session_id: "session-1", source_transcript_ids: ["line-1", "line-2"], related_canon_ids: ["canon-1"] }, error: null });
+    const parentUpdateQuery = createQuery();
     const revisionQuery = createQuery();
-    const supabase = { from: vi.fn().mockReturnValueOnce(parentQuery).mockReturnValueOnce(revisionQuery) };
+    const supabase = { from: vi.fn().mockReturnValueOnce(parentQuery).mockReturnValueOnce(parentUpdateQuery).mockReturnValueOnce(revisionQuery) };
     const repository = createSupabaseRepository(supabase);
 
     await repository.reviseStoryDraft("world-1", "draft-1", {
@@ -222,6 +214,8 @@ describe("비공개 이야기 작업실 저장소", () => {
 
     expect(parentQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
     expect(parentQuery.eq).toHaveBeenCalledWith("id", "draft-1");
+    expect(parentUpdateQuery.update).toHaveBeenCalledWith({ status: "revising" });
+    expect(parentUpdateQuery.eq).toHaveBeenCalledWith("id", "draft-1");
     expect(revisionQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
       id: "draft-2",
       world_id: "world-1",
@@ -231,29 +225,31 @@ describe("비공개 이야기 작업실 저장소", () => {
     }));
   });
 
-  it("채택은 세계별 다음 장면 순서를 만들고 같은 초안을 한 번만 채택한다", async () => {
-    const draftQuery = createQuery({ data: { id: "draft-1", world_id: "world-1", body: draft.body, status: "proposed" }, error: null });
-    const latestSceneQuery = createQuery({ data: [{ sequence: 3 }], error: null });
-    const sceneInsertQuery = createQuery();
-    const draftUpdateQuery = createQuery();
-    const supabase = {
-      from: vi.fn()
-        .mockReturnValueOnce(draftQuery)
-        .mockReturnValueOnce(latestSceneQuery)
-        .mockReturnValueOnce(sceneInsertQuery)
-        .mockReturnValueOnce(draftUpdateQuery),
-    };
+  it("채택은 원자적 RPC로 장면과 초안 상태를 함께 저장한다", async () => {
+    const supabase = { rpc: vi.fn(async () => ({ data: [{ id: "scene-draft-1", world_id: "world-1", draft_id: "draft-1", title: draft.title, content: draft.body, sequence: 4, accepted_at: "2026-07-31T02:00:00.000Z", source_transcript_ids: ["line-1", "line-2"], related_canon_ids: ["canon-1"] }], error: null })) };
     const repository = createSupabaseRepository(supabase);
 
     const scene = await repository.acceptStoryDraft("world-1", "draft-1", "2026-07-31T02:00:00.000Z");
 
     expect(scene).toMatchObject({ worldId: "world-1", draftId: "draft-1", order: 4 });
-    expect(draftQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
-    expect(sceneInsertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ world_id: "world-1", draft_id: "draft-1", sequence: 4 }));
-    expect(draftUpdateQuery.update).toHaveBeenCalledWith({ status: "accepted" });
-    expect(draftUpdateQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
+    expect(supabase.rpc).toHaveBeenCalledWith("accept_story_draft", {
+      p_world_id: "world-1", p_draft_id: "draft-1", p_scene_id: "scene-draft-1", p_accepted_at: "2026-07-31T02:00:00.000Z",
+    });
   });
 
+  it("채택 RPC가 허용되지 않은 상태를 거절하면 장면을 반환하지 않는다", async () => {
+    const supabase = { rpc: vi.fn(async () => ({ data: null, error: { message: "채택할 수 없는 초안입니다." } })) };
+    const repository = createSupabaseRepository(supabase);
+
+    await expect(repository.acceptStoryDraft("world-1", "draft-1")).rejects.toThrow("채택할 수 없는 초안입니다.");
+  });
+
+  it("채택 RPC가 충돌 또는 실패하면 오류를 그대로 전달한다", async () => {
+    const supabase = { rpc: vi.fn(async () => ({ data: null, error: { message: "duplicate key value violates unique constraint" } })) };
+    const repository = createSupabaseRepository(supabase);
+
+    await expect(repository.acceptStoryDraft("world-1", "draft-1")).rejects.toThrow("duplicate key");
+  });
   it("원고 조회는 해당 세계의 채택된 장면만 순서대로 반환한다", async () => {
     const query = createQuery({
       data: [

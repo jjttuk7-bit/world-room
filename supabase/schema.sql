@@ -97,3 +97,80 @@ create index if not exists story_drafts_world_id_created_at_idx
   on public.story_drafts(world_id, created_at desc);
 create index if not exists story_scenes_world_id_sequence_idx
   on public.story_scenes(world_id, sequence);
+
+-- Accepting a draft is one transaction: it serializes a world's sequence,
+-- creates the scene, and updates the draft lifecycle together.
+create or replace function public.accept_story_draft(
+  p_world_id text,
+  p_draft_id text,
+  p_scene_id text,
+  p_accepted_at timestamptz default now()
+)
+returns table (
+  id text,
+  world_id text,
+  draft_id text,
+  title text,
+  content text,
+  sequence integer,
+  accepted_at timestamptz,
+  source_transcript_ids jsonb,
+  related_canon_ids jsonb
+)
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_draft public.story_drafts%rowtype;
+  v_sequence integer;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(p_world_id, 0));
+
+  select * into v_draft
+  from public.story_drafts
+  where id = p_draft_id and world_id = p_world_id
+  for update;
+
+  if not found then
+    raise exception '채택할 초안을 찾을 수 없습니다.';
+  end if;
+
+  if v_draft.status = 'accepted' then
+    raise exception '이미 채택된 초안입니다.';
+  end if;
+
+  if v_draft.status not in ('proposed', 'revising') then
+    raise exception '채택할 수 없는 초안입니다.';
+  end if;
+
+  select coalesce(max(s.sequence), 0) + 1 into v_sequence
+  from public.story_scenes s
+  where s.world_id = p_world_id;
+
+  insert into public.story_scenes (
+    id, world_id, draft_id, title, content, sequence, status, accepted_at,
+    source_transcript_ids, related_canon_ids
+  ) values (
+    p_scene_id, p_world_id, v_draft.id, v_draft.title, v_draft.body, v_sequence,
+    'accepted', p_accepted_at, v_draft.source_transcript_ids, v_draft.related_canon_ids
+  );
+
+  update public.story_drafts
+  set status = 'accepted'
+  where id = v_draft.id and world_id = p_world_id;
+
+  if v_draft.parent_draft_id is not null then
+    update public.story_drafts
+    set status = 'superseded'
+    where id = v_draft.parent_draft_id
+      and world_id = p_world_id
+      and status = 'revising';
+  end if;
+
+  return query
+  select s.id, s.world_id, s.draft_id, s.title, s.content, s.sequence,
+         s.accepted_at, s.source_transcript_ids, s.related_canon_ids
+  from public.story_scenes s
+  where s.id = p_scene_id;
+end;
+$$;
