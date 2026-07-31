@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, saveSessionRecord } from "./server.mjs";
 
@@ -119,9 +120,9 @@ describe("World Room 세션 저장", () => {
     expect(supabase.from).toHaveBeenCalledWith("canon_cards");
     expect(calls).toEqual(
       expect.arrayContaining([
-        ["upsert", expect.objectContaining({ id: "world-1", continuity_brief: "기억" })],
-        ["upsert", expect.objectContaining({ id: "session-1", world_id: "world-1" })],
-        ["insert", [expect.objectContaining({ id: "card-1", world_id: "world-1", type: "setting" })]],
+        ["upsert", expect.objectContaining({ id: "world-1", owner_id: "00000000-0000-0000-0000-000000000001", continuity_brief: "기억" })],
+        ["upsert", expect.objectContaining({ id: "session-1", world_id: "world-1", owner_id: "00000000-0000-0000-0000-000000000001" })],
+        ["insert", [expect.objectContaining({ id: "card-1", world_id: "world-1", owner_id: "00000000-0000-0000-0000-000000000001", type: "setting" })]],
         ["update", expect.objectContaining({ latest_session_id: "session-1" })],
       ]),
     );
@@ -187,6 +188,7 @@ describe("비공개 이야기 작업실 저장소", () => {
     expect(query.insert).toHaveBeenCalledWith({
       id: "draft-1",
       world_id: "world-1",
+      owner_id: "00000000-0000-0000-0000-000000000001",
       session_id: "session-1",
       title: "금지된 지도",
       body: "잠수사는 금지된 지도를 펼쳤다.",
@@ -198,31 +200,39 @@ describe("비공개 이야기 작업실 저장소", () => {
     });
   });
 
-  it("수정은 부모를 revising으로 바꾸고 출처를 보존한 새 버전을 만든다", async () => {
-    const parentQuery = createQuery({ data: { id: "draft-1", world_id: "world-1", session_id: "session-1", source_transcript_ids: ["line-1", "line-2"], related_canon_ids: ["canon-1"] }, error: null });
-    const parentUpdateQuery = createQuery();
-    const revisionQuery = createQuery();
-    const supabase = { from: vi.fn().mockReturnValueOnce(parentQuery).mockReturnValueOnce(parentUpdateQuery).mockReturnValueOnce(revisionQuery) };
+  it("수정은 원자적 RPC로 부모 잠금과 수정본 생성을 함께 요청한다", async () => {
+    const supabase = {
+      rpc: vi.fn(async () => ({
+        data: [{
+          id: "draft-2", world_id: "world-1", session_id: "session-1", title: "항구의 지도",
+          body: "항구에서 지도가 펼쳐졌다.", status: "proposed", source_transcript_ids: ["line-1", "line-2"],
+          related_canon_ids: ["canon-1"], parent_draft_id: "draft-1", created_at: "2026-07-31T01:00:00.000Z",
+        }],
+        error: null,
+      })),
+    };
     const repository = createSupabaseRepository(supabase);
 
-    await repository.reviseStoryDraft("world-1", "draft-1", {
+    const created = await repository.reviseStoryDraft("world-1", "draft-1", {
       id: "draft-2",
       title: "항구의 지도",
       body: "항구에서 지도가 펼쳐졌다.",
       createdAt: "2026-07-31T01:00:00.000Z",
     });
 
-    expect(parentQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
-    expect(parentQuery.eq).toHaveBeenCalledWith("id", "draft-1");
-    expect(parentUpdateQuery.update).toHaveBeenCalledWith({ status: "revising" });
-    expect(parentUpdateQuery.eq).toHaveBeenCalledWith("id", "draft-1");
-    expect(revisionQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
-      id: "draft-2",
-      world_id: "world-1",
-      parent_draft_id: "draft-1",
-      source_transcript_ids: ["line-1", "line-2"],
-      related_canon_ids: ["canon-1"],
-    }));
+    expect(created).toMatchObject({ id: "draft-2", worldId: "world-1", parentDraftId: "draft-1", sourceTranscriptIds: ["line-1", "line-2"] });
+    expect(supabase.rpc).toHaveBeenCalledWith("revise_story_draft", {
+      p_world_id: "world-1", p_parent_draft_id: "draft-1", p_revision_id: "draft-2",
+      p_title: "항구의 지도", p_body: "항구에서 지도가 펼쳐졌다.", p_owner_id: "00000000-0000-0000-0000-000000000001", p_created_at: "2026-07-31T01:00:00.000Z",
+    });
+  });
+
+  it("수정 RPC가 같은 부모의 중복 수정본을 거절하면 오류를 전달한다", async () => {
+    const supabase = { rpc: vi.fn(async () => ({ data: null, error: { message: "이미 진행 중인 수정본이 있습니다." } })) };
+    const repository = createSupabaseRepository(supabase);
+
+    await expect(repository.reviseStoryDraft("world-1", "draft-1", { id: "draft-2", title: "수정", body: "본문" }))
+      .rejects.toThrow("이미 진행 중인 수정본이 있습니다.");
   });
 
   it("채택은 원자적 RPC로 장면과 초안 상태를 함께 저장한다", async () => {
@@ -233,7 +243,7 @@ describe("비공개 이야기 작업실 저장소", () => {
 
     expect(scene).toMatchObject({ worldId: "world-1", draftId: "draft-1", order: 4 });
     expect(supabase.rpc).toHaveBeenCalledWith("accept_story_draft", {
-      p_world_id: "world-1", p_draft_id: "draft-1", p_scene_id: "scene-draft-1", p_accepted_at: "2026-07-31T02:00:00.000Z",
+      p_world_id: "world-1", p_draft_id: "draft-1", p_scene_id: "scene-draft-1", p_owner_id: "00000000-0000-0000-0000-000000000001", p_accepted_at: "2026-07-31T02:00:00.000Z",
     });
   });
 
@@ -265,7 +275,20 @@ describe("비공개 이야기 작업실 저장소", () => {
     ]);
     expect(supabase.from).toHaveBeenCalledWith("story_scenes");
     expect(query.eq).toHaveBeenCalledWith("world_id", "world-1");
+    expect(query.eq).toHaveBeenCalledWith("owner_id", "00000000-0000-0000-0000-000000000001");
     expect(query.eq).toHaveBeenCalledWith("status", "accepted");
     expect(query.order).toHaveBeenCalledWith("sequence", { ascending: true });
+  });
+});
+
+describe("비공개 이야기 작업실 스키마", () => {
+  it("수정과 채택 RPC를 서비스 역할 전용의 트랜잭션 함수로 제한한다", () => {
+    const schema = readFileSync("supabase/schema.sql", "utf8");
+
+    expect(schema).toContain("create or replace function public.revise_story_draft(");
+    expect(schema).toMatch(/create or replace function public\.revise_story_draft\([\s\S]*?security definer/);
+    expect(schema).toMatch(/alter table public\.story_drafts enable row level security/);
+    expect(schema).toMatch(/revoke all on function public\.revise_story_draft[\s\S]*?from public, anon, authenticated/);
+    expect(schema).toMatch(/revoke all on function public\.accept_story_draft[\s\S]*?from public, anon, authenticated/);
   });
 });

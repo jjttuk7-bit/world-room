@@ -13,6 +13,7 @@ const apiKey = process.env.OPENAI_API_KEY;
 const summaryModel = process.env.OPENAI_SUMMARY_MODEL ?? "gpt-5.4-mini";
 const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const defaultWorkspaceOwnerId = process.env.WORLD_ROOM_OWNER_ID ?? "00000000-0000-0000-0000-000000000001";
 
 const instructions = `
 당신은 World Room의 실시간 한국어 세계 만들기 동반자입니다.
@@ -369,7 +370,7 @@ export function handleOptions(req, res) {
 
 export { sendJson };
 
-export function createSupabaseRepository(supabase) {
+export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceOwnerId } = {}) {
   async function assertNoError(result) {
     if (result?.error) {
       throw new Error(result.error.message ?? "Supabase 저장에 실패했습니다.");
@@ -384,6 +385,7 @@ export function createSupabaseRepository(supabase) {
           .from("worlds")
           .upsert({
             id: record.world.id,
+            owner_id: ownerId,
             title: record.world.title,
             summary: record.world.summary,
             continuity_brief: record.world.continuityBrief,
@@ -399,6 +401,7 @@ export function createSupabaseRepository(supabase) {
           .upsert({
             id: record.session.id,
             world_id: record.session.worldId,
+            owner_id: ownerId,
             title: record.session.title,
             transcript: record.session.transcript,
             sparks: record.session.sparks,
@@ -418,6 +421,7 @@ export function createSupabaseRepository(supabase) {
             record.canonCards.map((card) => ({
               id: card.id,
               world_id: card.worldId,
+              owner_id: ownerId,
               type: card.type,
               title: card.title,
               content: card.content,
@@ -452,6 +456,7 @@ export function createSupabaseRepository(supabase) {
         await supabase
           .from("worlds")
           .select("id,title,summary,continuity_brief,latest_session_id,updated_at")
+          .eq("owner_id", ownerId)
           .order("updated_at", { ascending: false })
           .limit(limit),
       );
@@ -471,6 +476,7 @@ export function createSupabaseRepository(supabase) {
         await supabase.from("story_drafts").insert({
           id: draft.id,
           world_id: draft.worldId,
+          owner_id: ownerId,
           session_id: draft.sessionId ?? null,
           title: draft.title,
           body: draft.body,
@@ -485,41 +491,33 @@ export function createSupabaseRepository(supabase) {
     },
 
     async reviseStoryDraft(worldId, draftId, revision) {
-      const parentResult = await assertNoError(
-        await supabase
-          .from("story_drafts")
-          .select("id,world_id,session_id,source_transcript_ids,related_canon_ids")
-          .eq("world_id", worldId)
-          .eq("id", draftId)
-          .single(),
+      const result = await assertNoError(
+        await supabase.rpc("revise_story_draft", {
+          p_world_id: worldId,
+          p_parent_draft_id: draftId,
+          p_revision_id: revision.id,
+          p_title: revision.title,
+          p_body: revision.body,
+          p_owner_id: ownerId,
+          p_created_at: revision.createdAt ?? new Date().toISOString(),
+        }),
       );
-      const parent = parentResult.data;
-      if (!parent) {
-        throw new Error("수정할 초안을 찾을 수 없습니다.");
+      const created = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!created) {
+        throw new Error("수정된 초안을 찾을 수 없습니다.");
       }
-
-      const createdAt = revision.createdAt ?? new Date().toISOString();
-      const created = {
-        id: revision.id,
-        worldId,
-        sessionId: parent.session_id,
-        title: revision.title,
-        body: revision.body,
-        status: "proposed",
-        sourceTranscriptIds: [...(parent.source_transcript_ids ?? [])],
-        relatedCanonIds: [...(parent.related_canon_ids ?? [])],
-        parentDraftId: parent.id,
-        createdAt,
+      return {
+        id: created.id,
+        worldId: created.world_id,
+        sessionId: created.session_id,
+        title: created.title,
+        body: created.body,
+        status: created.status,
+        sourceTranscriptIds: [...(created.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(created.related_canon_ids ?? [])],
+        parentDraftId: created.parent_draft_id,
+        createdAt: created.created_at,
       };
-      await assertNoError(
-        await supabase
-          .from("story_drafts")
-          .update({ status: "revising" })
-          .eq("world_id", worldId)
-          .eq("id", draftId),
-      );
-      await this.insertStoryDraft(created);
-      return created;
     },
 
     async acceptStoryDraft(worldId, draftId, acceptedAt = new Date().toISOString()) {
@@ -528,6 +526,7 @@ export function createSupabaseRepository(supabase) {
           p_world_id: worldId,
           p_draft_id: draftId,
           p_scene_id: `scene-${draftId}`,
+          p_owner_id: ownerId,
           p_accepted_at: acceptedAt,
         }),
       );
@@ -553,6 +552,7 @@ export function createSupabaseRepository(supabase) {
           .from("story_scenes")
           .select("id,world_id,draft_id,title,content,sequence,status,accepted_at,source_transcript_ids,related_canon_ids")
           .eq("world_id", worldId)
+          .eq("owner_id", ownerId)
           .eq("status", "accepted")
           .order("sequence", { ascending: true }),
       );
@@ -570,7 +570,7 @@ export function createSupabaseRepository(supabase) {
     },
 
     async deleteWorld(worldId) {
-      await assertNoError(await supabase.from("worlds").delete().eq("id", worldId));
+      await assertNoError(await supabase.from("worlds").delete().eq("id", worldId).eq("owner_id", ownerId));
       return { ok: true, worldId };
     },
   };
