@@ -70,6 +70,27 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: "세계 저장" })).toBeDisabled();
   });
 
+  it("새 세계 입력을 취소해도 현재 세계의 메타데이터를 바꾸지 않는다", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    fireEvent.change(screen.getByLabelText("세계 이름"), { target: { value: "취소할 세계" } });
+    fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+
+    expect(screen.getByText("안개 도시", { selector: ".world-name" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    expect(screen.getByLabelText("세계 이름")).toHaveValue("");
+  });
+
+  it("새 세계 대화상자를 네이티브 모달로 연다", async () => {
+    const showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); });
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: showModal });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    await waitFor(() => expect(showModal).toHaveBeenCalledTimes(1));
+  });
   it("새 세계 대화상자는 취소한 뒤 다시 열 수 있다", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
