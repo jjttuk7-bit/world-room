@@ -163,3 +163,21 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .canon-card p { margin: .4rem 0; color: var(--soft-ink); font-size: .88rem; line-height: 1.65; }
 .canon-card small { color: var(--muted); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .68rem; }
 .empty-canon { color: var(--muted); font-size: .86rem; line-height: 1.65; }
+.creative-brief {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, var(--accent));
+  background: color-mix(in srgb, var(--surface) 88%, var(--accent) 4%);
+}
+.creative-brief h3 { margin: .15rem 0 0; font-size: 1.15rem; }
+.creative-brief label { display: grid; gap: .5rem; font-weight: 700; }
+.creative-brief textarea { width: 100%; resize: vertical; }
+.creative-brief dl { display: grid; gap: .75rem; margin: 0; }
+.creative-brief dl div { display: grid; grid-template-columns: 9rem 1fr; gap: .75rem; }
+.creative-brief dt { color: var(--muted); font-size: .78rem; font-weight: 800; }
+.creative-brief dd { margin: 0; line-height: 1.55; }
+.brief-actions { display: flex; align-items: center; gap: .75rem; }
+.brief-approved { margin: 0; color: var(--accent); font-weight: 700; }
+@media (max-width: 640px) { .creative-brief dl div { grid-template-columns: 1fr; gap: .2rem; } }

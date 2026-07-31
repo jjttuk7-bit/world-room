@@ -329,6 +329,76 @@ function sentenceCount(body) {
   return String(body).trim().split(/[.!?…。]+(?:\s|$)/).filter(Boolean).length;
 }
 
+const CREATIVE_BRIEF_LIMITS = Object.freeze({
+  intent: 1200,
+  conflict: 800,
+  tone: 400,
+  requiredElements: 8,
+  requiredElement: 240,
+  sessionGoal: 600,
+});
+
+function validateCreativeBriefRequestUnsafe(payload) {
+  const intent = boundedText(payload?.intent, "창작 의도", CREATIVE_BRIEF_LIMITS.intent);
+  if (!intent) throw new Error("창작 의도가 필요합니다.");
+  const conflict = boundedText(payload?.conflict, "핵심 갈등", CREATIVE_BRIEF_LIMITS.conflict);
+  const tone = boundedText(payload?.tone, "분위기와 문체", CREATIVE_BRIEF_LIMITS.tone);
+  const rawElements = Array.isArray(payload?.requiredElements) ? payload.requiredElements : [];
+  if (rawElements.length > CREATIVE_BRIEF_LIMITS.requiredElements) throw new Error("반드시 포함할 요소는 최대 8개까지 입력할 수 있습니다.");
+  const requiredElements = rawElements.map((item) => boundedText(item, "반드시 포함할 요소", CREATIVE_BRIEF_LIMITS.requiredElement)).filter(Boolean);
+  const sessionGoal = boundedText(payload?.sessionGoal, "이번 대화의 목표", CREATIVE_BRIEF_LIMITS.sessionGoal);
+  return { intent, conflict, tone, requiredElements, sessionGoal };
+}
+
+export function validateCreativeBriefRequest(payload) {
+  try {
+    return validateCreativeBriefRequestUnsafe(payload);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "VALIDATION_ERROR", error instanceof Error ? error.message : "창작 브리프 요청이 올바르지 않습니다.");
+  }
+}
+
+function parseCreativeBriefResponse(data) {
+  const generated = parseResponseText(data);
+  return validateCreativeBriefRequestUnsafe(generated);
+}
+
+export async function generateCreativeBrief(payload, options = {}) {
+  const request = validateCreativeBriefRequest(payload);
+  const secret = options.apiKey ?? apiKey;
+  if (!secret) throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": safetyIdentifier() },
+    body: JSON.stringify({
+      model: process.env.OPENAI_BRIEF_MODEL ?? summaryModel,
+      input: [
+        { role: "system", content: "당신은 한국어 소설 창작 스튜디오의 기획 편집자입니다. 사용자의 창작 의도를 존중해 대화를 시작하기 전의 짧고 구체적인 창작 브리프를 제안합니다. 알 수 없는 내용은 빈 문자열 또는 빈 배열로 두며, 이야기를 새로 시작하거나 설정을 단정하지 않습니다." },
+        { role: "user", content: JSON.stringify(request) },
+      ],
+      text: { format: { type: "json_schema", name: "world_room_creative_brief", schema: { type: "object", additionalProperties: false, required: ["intent", "conflict", "tone", "requiredElements", "sessionGoal"], properties: { intent: { type: "string" }, conflict: { type: "string" }, tone: { type: "string" }, requiredElements: { type: "array", items: { type: "string" } }, sessionGoal: { type: "string" } } } } },
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message ?? "창작 브리프 제안에 실패했습니다.");
+  return { ...parseCreativeBriefResponse(data), approved: false };
+}
+
+export function buildApprovedBriefOpeningContext(brief) {
+  if (!brief?.approved) return "";
+  const approved = validateCreativeBriefRequestUnsafe(brief);
+  return [
+    "오늘의 창작 브리프:",
+    `창작 의도: ${approved.intent}`,
+    approved.conflict && `핵심 갈등: ${approved.conflict}`,
+    approved.tone && `분위기와 문체: ${approved.tone}`,
+    approved.requiredElements.length > 0 && `반드시 포함할 요소: ${approved.requiredElements.join(", ")}`,
+    approved.sessionGoal && `이번 대화의 목표: ${approved.sessionGoal}`,
+    "새 이야기를 독단적으로 시작하지 말고, 이 브리프의 어느 지점부터 열지 한 가지 질문으로 물으세요.",
+  ].filter(Boolean).join("\n");
+}
 function validateStoryDraftRequestUnsafe(payload) {
   const worldId = String(payload?.worldId ?? "").trim();
   if (!worldId) throw new Error("세계 ID가 필요합니다.");

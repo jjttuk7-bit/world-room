@@ -41,8 +41,9 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: "대화" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "원고" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "세계 성경" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("heading", { name: "말로 다음 장면을 찾아보세요" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /대화 시작/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "어떤 이야기를 만들고 싶으세요?" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "만들고 싶은 이야기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "브리프를 먼저 정리하세요" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "세계 저장" })).toBeDisabled();
     expect(screen.queryByRole("heading", { name: "최근 세계" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("세계 이름")).not.toBeInTheDocument();
@@ -177,6 +178,7 @@ describe("World Room 앱", () => {
     });
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, options?: RequestInit) => {
       const url = String(input);
+      if (url === "/api/creative-brief") return { ok: true, json: async () => ({ intent: "안개 속 항구의 사공", conflict: "사라진 지도", tone: "몽환적", requiredElements: [], sessionGoal: "첫 장면" , approved: false }) } as Response;
       if (url === "/api/token") return { ok: true, json: async () => ({ value: "ephemeral-key" }) } as Response;
       if (url === "https://api.openai.com/v1/realtime/calls") return { ok: true, text: async () => "answer" } as Response;
       if (url === "/api/sessions" && options?.method === "POST") return { ok: true, json: async () => ({ ok: true, path: "supabase/worlds/world-saved", worldId: "world-saved", sessionId: "session-saved" }) } as Response;
@@ -185,6 +187,10 @@ describe("World Room 앱", () => {
     });
 
     render(<App />);
+    fireEvent.change(screen.getByRole("textbox", { name: "만들고 싶은 이야기" }), { target: { value: "안개 속 항구의 사공 이야기" } });
+    fireEvent.click(screen.getByRole("button", { name: "방향 정리하기" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "이 브리프로 대화 시작" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "이 브리프로 대화 시작" }));
     fireEvent.click(screen.getByRole("button", { name: "대화 시작" }));
     await waitFor(() => expect(channel).toBeDefined());
     channel?.dispatchEvent(new Event("open"));

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { appendTranscriptLine, reduceRealtimeEvent } from "./realtime/events";
 import type { RealtimeSignal, TranscriptLine } from "./realtime/events";
 import type { StoryCanon, StoryDraft, StoryScene } from "./story/models";
+import { approvedBriefOpeningContext, createCreativeBrief, type CreativeBrief } from "./brief/models";
 
 type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening" | "speaking" | "recovering" | "ended" | "error";
 
@@ -12,6 +13,7 @@ const sessionSaveUrl = import.meta.env.VITE_SESSION_SAVE_URL ?? "/api/sessions";
 const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? "/api/worlds/recent";
 const worldsUrl = import.meta.env.VITE_WORLDS_URL ?? "/api/worlds";
 const storyDraftsUrl = import.meta.env.VITE_STORY_DRAFTS_URL ?? "/api/story/drafts";
+const creativeBriefUrl = import.meta.env.VITE_CREATIVE_BRIEF_URL ?? "/api/creative-brief";
 
 type RecentWorld = {
   id: string;
@@ -88,6 +90,10 @@ export default function App() {
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [revisionTitle, setRevisionTitle] = useState("");
   const [revisionBody, setRevisionBody] = useState("");
+  const [briefInput, setBriefInput] = useState("");
+  const [creativeBrief, setCreativeBrief] = useState<CreativeBrief | null>(null);
+  const [briefAction, setBriefAction] = useState(false);
+  const [briefError, setBriefError] = useState("");
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -112,6 +118,7 @@ export default function App() {
 
   const canSaveWorld = transcript.some((line) => line.speaker === "사용자" || line.speaker === "동반자");
   const isRealtimeReady = sessionState === "ready" || sessionState === "listening" || sessionState === "speaking";
+  const canStartSession = Boolean(creativeBrief?.approved);
 
   useEffect(() => {
     void loadRecentWorlds();
@@ -163,6 +170,7 @@ export default function App() {
   }
 
   async function startSession() {
+    if (!canStartSession) { setBriefError("대화를 시작하기 전에 오늘 만들 이야기를 먼저 정리해 주세요."); return; }
     if (sessionState === "requesting" || sessionState === "connecting") return;
 
     stopSession(false);
@@ -328,6 +336,25 @@ export default function App() {
     channel.send(JSON.stringify({ type: "response.create" }));
   }
 
+  async function proposeCreativeBrief() {
+    setBriefError("");
+    let request: CreativeBrief;
+    try { request = createCreativeBrief({ intent: briefInput }); } catch (caught) { setBriefError(caught instanceof Error ? caught.message : "창작 의도를 입력해 주세요."); return; }
+    setBriefAction(true);
+    try {
+      const response = await fetch(creativeBriefUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message ?? result.error ?? "창작 브리프를 제안하지 못했습니다.");
+      setCreativeBrief(result);
+    } catch (caught) { setBriefError(caught instanceof Error ? caught.message : "창작 브리프를 제안하지 못했습니다."); } finally { setBriefAction(false); }
+  }
+
+  function approveCreativeBrief() {
+    if (!creativeBrief) return;
+    setCreativeBrief({ ...creativeBrief, approved: true });
+    setBriefError("");
+    setStatusText("오늘의 창작 브리프가 준비되었습니다.");
+  }
   async function saveWorldSession() {
     if (!canSaveWorld || isSaving) return;
 
@@ -535,7 +562,12 @@ export default function App() {
       {(error || saveStatus) && <p className="studio-notice" role="status">{error || saveStatus}</p>}
       <section className="studio-content" id="studio-content">
         {activeMode === "conversation" && <section className="conversation-stage" aria-labelledby="conversation-title">
-          <div className="conversation-intro"><p className="eyebrow">오늘의 장면</p><h2 id="conversation-title">말로 다음 장면을 찾아보세요</h2><p>동반자와 이야기하면, 결정된 설정과 장면의 실마리가 이 세계의 기록으로 남습니다.</p></div>
+          <div className="conversation-intro"><p className="eyebrow">오늘의 장면</p><h2 id="conversation-title">{creativeBrief?.approved ? "말로 다음 장면을 찾아보세요" : "어떤 이야기를 만들고 싶으세요?"}</h2><p>{creativeBrief?.approved ? "동반자와 이야기하면, 결정된 설정과 장면의 실마리가 이 세계의 기록으로 남습니다." : "먼저 한 줄로 방향을 적어 주세요. World Room이 오늘의 창작 브리프로 정리한 뒤, 당신이 확인한 방향에서만 대화를 엽니다."}</p></div>
+          <section className="creative-brief" aria-labelledby="brief-title">
+            <div><p className="eyebrow">Before voice</p><h3 id="brief-title">오늘의 창작 브리프</h3></div>
+            {!creativeBrief ? <><label>만들고 싶은 이야기<textarea aria-label="만들고 싶은 이야기" value={briefInput} onChange={(event) => setBriefInput(event.target.value)} placeholder="예: 기억을 잃은 잠수사의 첫 귀환 장면을 만들고 싶어요." rows={3} /></label><button type="button" className="primary-button" onClick={() => void proposeCreativeBrief()} disabled={briefAction}>{briefAction ? "방향을 정리하는 중" : "방향 정리하기"}</button></> : <><dl><div><dt>창작 의도</dt><dd>{creativeBrief.intent}</dd></div>{creativeBrief.conflict && <div><dt>핵심 갈등</dt><dd>{creativeBrief.conflict}</dd></div>}{creativeBrief.tone && <div><dt>분위기와 문체</dt><dd>{creativeBrief.tone}</dd></div>}{creativeBrief.requiredElements.length > 0 && <div><dt>반드시 포함할 요소</dt><dd>{creativeBrief.requiredElements.join(" · ")}</dd></div>}{creativeBrief.sessionGoal && <div><dt>이번 대화의 목표</dt><dd>{creativeBrief.sessionGoal}</dd></div>}</dl>{creativeBrief.approved ? <p className="brief-approved">이 방향으로 대화를 시작합니다. 동반자는 먼저 어느 장면부터 열지 질문합니다.</p> : <div className="brief-actions"><button type="button" className="text-button" onClick={() => setCreativeBrief(null)}>다시 정리</button><button type="button" className="primary-button" onClick={approveCreativeBrief}>이 브리프로 대화 시작</button></div>}</>}
+            {briefError && <p className="draft-feedback error" role="status">{briefError}</p>}
+          </section>
           <div className="conversation-layout"><section className="transcript-sheet" aria-label="대화 기록"><div className="sheet-heading"><span>대화 기록</span><span>{stateLabel}</span></div><div className="transcript-list">{transcript.map((line) => <article className={`line ${line.speaker === "사용자" ? "user" : "assistant"}`} key={line.id}><span>{line.speaker}</span><p>{line.text}</p></article>)}</div></section><aside className="conversation-margin" aria-label="대화 단서와 장면 초안">
             <p className="margin-label">대화에서 포착한 단서</p>
             {sparks.length ? <div className="spark-list">{sparks.map((spark) => <button key={spark} onClick={() => sendTextPrompt(`${spark}를 바탕으로 다음 질문을 하나 던져줘.`)} disabled={!isRealtimeReady}>{spark}</button>)}</div> : <p className="empty-panel-copy">아직 단서가 없습니다. 첫 문장을 말하면 세계의 결이 기록됩니다.</p>}
@@ -545,7 +577,7 @@ export default function App() {
               {(draftStatus || draftError) && <p className={draftError ? "draft-feedback error" : "draft-feedback"} role="status">{draftError || draftStatus}</p>}
             </section>
           </aside></div>
-          <footer className="voice-dock" aria-label="대화 조작"><div className={`voice-pulse ${sessionState}`} aria-hidden="true"><span /></div><div><strong>{statusText}</strong><span>마이크로 말하면 대화가 기록됩니다.</span></div><div className="voice-actions"><button className="primary-button" onClick={startSession} disabled={sessionState === "requesting" || sessionState === "connecting"}>{sessionState === "idle" || sessionState === "ended" || sessionState === "error" ? "대화 시작" : "대화 다시 시작"}</button><button className="icon-button" onClick={toggleMute} disabled={!streamRef.current}>{muted ? "마이크 켜기" : "마이크 끄기"}</button><button className="text-button" onClick={() => stopSession()} disabled={!peerRef.current}>종료</button><button className="text-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>{isSaving ? "저장 중" : "세계 저장"}</button></div></footer>
+          <footer className="voice-dock" aria-label="대화 조작"><div className={`voice-pulse ${sessionState}`} aria-hidden="true"><span /></div><div><strong>{statusText}</strong><span>마이크로 말하면 대화가 기록됩니다.</span></div><div className="voice-actions"><button className="primary-button" onClick={startSession} disabled={!canStartSession || sessionState === "requesting" || sessionState === "connecting"}>{!canStartSession ? "브리프를 먼저 정리하세요" : sessionState === "idle" || sessionState === "ended" || sessionState === "error" ? "대화 시작" : "대화 다시 시작"}</button><button className="icon-button" onClick={toggleMute} disabled={!streamRef.current}>{muted ? "마이크 켜기" : "마이크 끄기"}</button><button className="text-button" onClick={() => stopSession()} disabled={!peerRef.current}>종료</button><button className="text-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>{isSaving ? "저장 중" : "세계 저장"}</button></div></footer>
         </section>}
         {activeMode === "manuscript" && <section className="writing-view" aria-labelledby="manuscript-title"><p className="eyebrow">Manuscript</p><h2 id="manuscript-title">원고</h2><p className="view-lead">채택한 장면이 이곳에서 한 편의 이야기로 이어집니다.</p>{scenes.length ? <div className="manuscript-scenes">{scenes.map((scene) => <article key={scene.id} className="manuscript-scene"><span>{String(scene.order).padStart(2, "0")}</span><h3>{scene.title || "이름 없는 장면"}</h3><p>{scene.content}</p><small>대화 근거 {scene.sourceTranscriptIds?.length ?? 0}개 · 세계 성경 {scene.relatedCanonIds?.length ?? 0}개</small>{scene.relatedCanonIds?.length ? <p className="scene-source-links">{scene.relatedCanonIds.map((id) => canon.find((card) => card.id === id)?.title ?? id).join(" · ")}</p> : null}</article>)}</div> : <article className="empty-manuscript"><span>01</span><h3>아직 채택된 장면이 없습니다</h3><p>대화에서 떠오른 장면을 검토하고 채택하면, 이곳에 작가의 원고로 쌓입니다.</p><button type="button" onClick={() => setActiveMode("conversation")}>대화로 돌아가기</button></article>}</section>}
         {activeMode === "bible" && <section className="writing-view" aria-labelledby="bible-title"><p className="eyebrow">World bible</p><h2 id="bible-title">세계 성경</h2><p className="view-lead">인물, 장소, 규칙과 사건을 대화의 근거와 함께 보관합니다.</p><div className="bible-columns">{bibleGroups.map((group) => { const cards = canon.filter((card) => group.types.includes(card.type)); return <article key={group.label}><h3>{group.label}</h3>{cards.length ? <div className="canon-card-list">{cards.map((card) => <section className="canon-card" key={card.id}><h4>{card.title}</h4><p>{card.content}</p><small>{card.sourceSessionId ? `세션 근거 · ${card.sourceSessionId}` : "세션 근거 없음"}</small></section>)}</div> : <p className="empty-canon">아직 기록된 {group.label === "장소와 규칙" ? "설정" : group.label}이 없습니다.</p>}</article>; })}</div></section>}
