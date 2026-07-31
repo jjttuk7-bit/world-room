@@ -492,7 +492,7 @@ export async function createGeneratedStoryDraft(payload, options = {}) {
 export async function saveCreativeBrief(worldId, brief, options = {}) {
   const cleanWorldId = String(worldId ?? "").trim();
   if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
-  if (!brief?.approved) throw new ApiError(400, "BRIEF_NOT_APPROVED", "승인된 창작 브리프만 저장할 수 있습니다.");
+  if (brief?.approved !== true) throw new ApiError(400, "BRIEF_NOT_APPROVED", "승인된 창작 브리프만 저장할 수 있습니다.");
   const repository = options.repository ?? createDefaultRepository();
   if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
   await repository.assertWorldOwned(cleanWorldId);

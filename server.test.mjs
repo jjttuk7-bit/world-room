@@ -304,6 +304,23 @@ describe("승인 창작 브리프 저장", () => {
     }), { worldChecked: true });
   });
 
+  it("승인은 boolean true일 때만 저장을 허용한다", async () => {
+    const repository = {
+      assertWorldOwned: vi.fn(async () => ({ id: "world-1" })),
+      saveCreativeBrief: vi.fn(),
+    };
+
+    await expect(saveCreativeBrief("world-1", {
+      approved: "true",
+      intent: "잠수사가 지도를 찾는다.",
+      conflict: "",
+      tone: "",
+      requiredElements: [],
+      sessionGoal: "첫 장면을 정한다.",
+    }, { repository })).rejects.toMatchObject({ status: 400, code: "BRIEF_NOT_APPROVED" });
+    expect(repository.assertWorldOwned).not.toHaveBeenCalled();
+    expect(repository.saveCreativeBrief).not.toHaveBeenCalled();
+  });
   it("저장소는 승인된 브리프를 activate_creative_brief RPC로 원자적으로 활성화한다", async () => {
     const query = {
       select: vi.fn(() => query),
@@ -345,6 +362,15 @@ describe("비공개 이야기 작업실 스키마", () => {
   });
 });
 
+describe("창작 브리프 스키마", () => {
+  it("활성화 RPC를 서비스 역할 전용 SECURITY DEFINER 함수로 제한한다", () => {
+    const schema = readFileSync("supabase/schema.sql", "utf8");
+
+    expect(schema).toMatch(/create or replace function public\.activate_creative_brief\([\s\S]*?security definer[\s\S]*?set search_path = public, pg_temp/);
+    expect(schema).toMatch(/revoke all on function public\.activate_creative_brief\([\s\S]*?from public, anon, authenticated/);
+    expect(schema).toMatch(/grant execute on function public\.activate_creative_brief\([\s\S]*?to service_role/);
+  });
+});
 describe("장면 초안 생성", () => {
   const request = {
     worldId: "world-1",
