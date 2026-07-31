@@ -503,6 +503,15 @@ export async function saveCreativeBrief(worldId, brief, options = {}) {
     status: "active",
   }, { worldChecked: true });
 }
+export async function getCurrentCreativeBrief(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  return { worldId: cleanWorldId, brief: await repository.getCurrentCreativeBrief(cleanWorldId, { worldChecked: true }) };
+}
+
 export async function getWorldStory(worldId, options = {}) {
   const cleanWorldId = String(worldId ?? "").trim();
   if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
@@ -657,6 +666,11 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
     return world;
   }
 
+  function toCreativeBrief(row) {
+    if (!row) return null;
+    return { id: row.id, worldId: row.world_id, intent: row.intent, conflict: row.conflict, tone: row.tone, requiredElements: [...(row.required_elements ?? [])], sessionGoal: row.session_goal, status: row.status, createdAt: row.created_at, approved: row.status === "active" };
+  }
+
   function toStoryDraft(row) {
     return {
       id: row.id, worldId: row.world_id, sessionId: row.session_id, title: row.title, body: row.body, status: row.status,
@@ -765,6 +779,14 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
     },
 
     assertWorldOwned,
+
+    async getCurrentCreativeBrief(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.from("creative_briefs").select("id,world_id,intent,conflict,tone,required_elements,session_goal,status,created_at").eq("world_id", worldId).eq("owner_id", ownerId).eq("status", "active").order("created_at", { ascending: false }).limit(1),
+      );
+      return toCreativeBrief(Array.isArray(result.data) ? result.data[0] : result.data);
+    },
 
     async saveCreativeBrief(worldId, brief, { worldChecked = false } = {}) {
       if (!worldChecked) await assertWorldOwned(worldId);
