@@ -329,9 +329,18 @@ describe("장면 초안 생성", () => {
     await expect(generateStoryDraft(request, { apiKey: "test-key", fetchImpl })).rejects.toThrow("초안이 제공되지 않은 대화 근거를 참조했습니다.");
   });
   it("세계 원고 조회는 소유자 범위 저장소 결과를 반환한다", async () => {
-    const repository = { assertWorldOwned: vi.fn(async () => ({ id: "world-1" })), listWorldManuscript: vi.fn(async (worldId) => [{ id: "scene-1", worldId, order: 1 }]) };
-    await expect(getWorldStory("world-1", { repository })).resolves.toEqual({ worldId: "world-1", scenes: [{ id: "scene-1", worldId: "world-1", order: 1 }] });
+    const repository = {
+      assertWorldOwned: vi.fn(async () => ({ id: "world-1" })),
+      listWorldManuscript: vi.fn(async (worldId) => [{ id: "scene-1", worldId, order: 1 }]),
+      listWorldCanon: vi.fn(async (worldId) => [{ id: "canon-1", worldId, type: "character", content: "유나" }]),
+    };
+    await expect(getWorldStory("world-1", { repository })).resolves.toEqual({
+      worldId: "world-1",
+      scenes: [{ id: "scene-1", worldId: "world-1", order: 1 }],
+      canon: [{ id: "canon-1", worldId: "world-1", type: "character", content: "유나" }],
+    });
     expect(repository.listWorldManuscript).toHaveBeenCalledWith("world-1", { worldChecked: true });
+    expect(repository.listWorldCanon).toHaveBeenCalledWith("world-1", { worldChecked: true });
   });
 });
 

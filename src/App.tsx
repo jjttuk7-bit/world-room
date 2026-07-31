@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { appendTranscriptLine, reduceRealtimeEvent } from "./realtime/events";
 import type { RealtimeSignal, TranscriptLine } from "./realtime/events";
-import type { StoryDraft, StoryScene } from "./story/models";
+import type { StoryCanon, StoryDraft, StoryScene } from "./story/models";
 
 type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening" | "speaking" | "recovering" | "ended" | "error";
 
@@ -25,6 +25,11 @@ type RecentWorld = {
 const moodOptions = ["몽환적", "어두운", "따뜻한", "기묘한", "모험적"];
 const genreOptions = ["판타지", "SF", "미스터리", "호러", "동화", "동양풍"];
 const companionModes = ["질문 위주", "선택지 제안", "장면 묘사", "인물 중심"];
+const bibleGroups: ReadonlyArray<{ label: string; types: readonly StoryCanon["type"][] }> = [
+  { label: "인물", types: ["character"] },
+  { label: "장소와 규칙", types: ["setting"] },
+  { label: "미해결 갈등", types: ["conflict", "scene_hook"] },
+];
 
 function createWelcomeTranscript(): TranscriptLine[] {
   return [{
@@ -76,6 +81,7 @@ export default function App() {
   const [pendingCompanionMode, setPendingCompanionMode] = useState(companionModes[0]);
   const [drafts, setDrafts] = useState<StoryDraft[]>([]);
   const [scenes, setScenes] = useState<StoryScene[]>([]);
+  const [canon, setCanon] = useState<StoryCanon[]>([]);
   const [draftStatus, setDraftStatus] = useState("");
   const [draftError, setDraftError] = useState("");
   const [draftAction, setDraftAction] = useState<"generate" | "accept" | "hold" | "revise" | "load" | "">("");
@@ -147,6 +153,7 @@ export default function App() {
       if (!storyResponse.ok) throw new Error(storyResult.error?.message ?? "저장된 원고를 불러오지 못했습니다.");
       setDrafts(draftResult.drafts ?? []);
       setScenes(storyResult.scenes ?? []);
+      setCanon(storyResult.canon ?? []);
     } catch (caught) {
       setDraftError(caught instanceof Error ? caught.message : "창작 기록을 불러오지 못했습니다.");
     } finally { setDraftAction(""); }
@@ -379,6 +386,9 @@ export default function App() {
     setSelectedWorld(null);
     setTranscript(createWelcomeTranscript());
     setSparks([]);
+    setDrafts([]);
+    setScenes([]);
+    setCanon([]);
     setSessionState("idle");
     setMuted(false);
     setError("");
@@ -390,7 +400,11 @@ export default function App() {
   }
   function continueWorld(world: RecentWorld) {
     setSelectedWorld(world);
+    setDrafts([]);
+    setScenes([]);
+    setCanon([]);
     setStatusText(`${world.title} 이어 말하기 준비`);
+    void loadStoryWorkspace(world.id);
   }
 
   async function deleteWorld(world: RecentWorld) {
@@ -424,7 +438,7 @@ export default function App() {
     if (!selectedWorld || !canGenerateDraft) return;
     setDraftAction("generate"); setDraftError(""); setDraftStatus("장면 초안을 쓰는 중입니다.");
     try {
-      const response = await fetch(`${worldsUrl}/${encodeURIComponent(selectedWorld.id)}/story`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world: { title: selectedWorld.title, continuityBrief: selectedWorld.continuityBrief, summary: selectedWorld.summary }, sessionId: selectedWorld.latestSessionId, transcript: storyTranscript, canon: [] }) });
+      const response = await fetch(`${worldsUrl}/${encodeURIComponent(selectedWorld.id)}/story`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ world: { title: selectedWorld.title, continuityBrief: selectedWorld.continuityBrief, summary: selectedWorld.summary }, sessionId: selectedWorld.latestSessionId, transcript: storyTranscript, canon }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error?.message ?? "장면 초안 생성에 실패했습니다.");
       setDrafts((current) => [result, ...current.filter((draft) => draft.id !== result.id)]);
@@ -516,8 +530,8 @@ export default function App() {
           </aside></div>
           <footer className="voice-dock" aria-label="대화 조작"><div className={`voice-pulse ${sessionState}`} aria-hidden="true"><span /></div><div><strong>{statusText}</strong><span>마이크로 말하면 대화가 기록됩니다.</span></div><div className="voice-actions"><button className="primary-button" onClick={startSession} disabled={sessionState === "requesting" || sessionState === "connecting"}>{sessionState === "idle" || sessionState === "ended" || sessionState === "error" ? "대화 시작" : "대화 다시 시작"}</button><button className="icon-button" onClick={toggleMute} disabled={!streamRef.current}>{muted ? "마이크 켜기" : "마이크 끄기"}</button><button className="text-button" onClick={() => stopSession()} disabled={!peerRef.current}>종료</button><button className="text-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>{isSaving ? "저장 중" : "세계 저장"}</button></div></footer>
         </section>}
-        {activeMode === "manuscript" && <section className="writing-view" aria-labelledby="manuscript-title"><p className="eyebrow">Manuscript</p><h2 id="manuscript-title">원고</h2><p className="view-lead">채택한 장면이 이곳에서 한 편의 이야기로 이어집니다.</p>{scenes.length ? <div className="manuscript-scenes">{scenes.map((scene) => <article key={scene.id} className="manuscript-scene"><span>{String(scene.order).padStart(2, "0")}</span><h3>{scene.title || "이름 없는 장면"}</h3><p>{scene.content}</p><small>대화 근거 {scene.sourceTranscriptIds?.length ?? 0}개</small></article>)}</div> : <article className="empty-manuscript"><span>01</span><h3>아직 채택된 장면이 없습니다</h3><p>대화에서 떠오른 장면을 검토하고 채택하면, 이곳에 작가의 원고로 쌓입니다.</p><button type="button" onClick={() => setActiveMode("conversation")}>대화로 돌아가기</button></article>}</section>}
-        {activeMode === "bible" && <section className="writing-view" aria-labelledby="bible-title"><p className="eyebrow">World bible</p><h2 id="bible-title">세계 성경</h2><p className="view-lead">인물, 장소, 규칙과 사건을 대화의 근거와 함께 보관합니다.</p><div className="bible-columns"><article><span>인물</span><p>대화에서 인물이 구체화되면 이곳에 연결됩니다.</p></article><article><span>장소와 규칙</span><p>세계의 질서를 흔들지 않도록 기록합니다.</p></article><article><span>미해결 갈등</span><p>다음 장면에서 다시 꺼낼 긴장을 모읍니다.</p></article></div></section>}
+        {activeMode === "manuscript" && <section className="writing-view" aria-labelledby="manuscript-title"><p className="eyebrow">Manuscript</p><h2 id="manuscript-title">원고</h2><p className="view-lead">채택한 장면이 이곳에서 한 편의 이야기로 이어집니다.</p>{scenes.length ? <div className="manuscript-scenes">{scenes.map((scene) => <article key={scene.id} className="manuscript-scene"><span>{String(scene.order).padStart(2, "0")}</span><h3>{scene.title || "이름 없는 장면"}</h3><p>{scene.content}</p><small>대화 근거 {scene.sourceTranscriptIds?.length ?? 0}개 · 세계 성경 {scene.relatedCanonIds?.length ?? 0}개</small>{scene.relatedCanonIds?.length ? <p className="scene-source-links">{scene.relatedCanonIds.map((id) => canon.find((card) => card.id === id)?.title ?? id).join(" · ")}</p> : null}</article>)}</div> : <article className="empty-manuscript"><span>01</span><h3>아직 채택된 장면이 없습니다</h3><p>대화에서 떠오른 장면을 검토하고 채택하면, 이곳에 작가의 원고로 쌓입니다.</p><button type="button" onClick={() => setActiveMode("conversation")}>대화로 돌아가기</button></article>}</section>}
+        {activeMode === "bible" && <section className="writing-view" aria-labelledby="bible-title"><p className="eyebrow">World bible</p><h2 id="bible-title">세계 성경</h2><p className="view-lead">인물, 장소, 규칙과 사건을 대화의 근거와 함께 보관합니다.</p><div className="bible-columns">{bibleGroups.map((group) => { const cards = canon.filter((card) => group.types.includes(card.type)); return <article key={group.label}><h3>{group.label}</h3>{cards.length ? <div className="canon-card-list">{cards.map((card) => <section className="canon-card" key={card.id}><h4>{card.title}</h4><p>{card.content}</p><small>{card.sourceSessionId ? `세션 근거 · ${card.sourceSessionId}` : "세션 근거 없음"}</small></section>)}</div> : <p className="empty-canon">아직 기록된 {group.label === "장소와 규칙" ? "설정" : group.label}이 없습니다.</p>}</article>; })}</div></section>}
       </section>
       {libraryOpen && <aside className="library-panel" aria-label="작업 보관함"><div className="panel-heading"><div><p className="eyebrow">Saved worlds</p><h2>최근 세계</h2></div><button className="text-button" type="button" onClick={() => setLibraryOpen(false)}>닫기</button></div><div className="world-card-grid">{recentWorlds.length ? recentWorlds.map((world) => <article className={selectedWorld?.id === world.id ? "world-card selected" : "world-card"} key={world.id}><span>{world.updatedAt ? new Date(world.updatedAt).toLocaleDateString("ko-KR") : "최근 저장"}</span><h3>{world.title}</h3><p>{world.summary}</p><div className="world-card-actions"><button onClick={() => { continueWorld(world); setLibraryOpen(false); }}>{world.title} 이어 말하기</button><button className="danger-button" onClick={() => void deleteWorld(world)}>{world.title} 삭제</button></div></article>) : <p className="empty-panel-copy">저장한 세계가 아직 없습니다.</p>}</div></aside>}
       {seedOpen && <dialog ref={seedDialogRef} className="seed-dialog" aria-label="새 세계 열기" onCancel={(event) => { event.preventDefault(); setSeedOpen(false); }} onClose={() => setSeedOpen(false)}><form method="dialog" onSubmit={(event) => { event.preventDefault(); commitNewWorld(); }}><div className="dialog-heading"><div><p className="eyebrow">New world</p><h2>새 세계 열기</h2></div><button className="text-button" type="button" onClick={() => setSeedOpen(false)}>닫기</button></div><p>완벽한 설정은 필요 없습니다. 한 줄의 씨앗이면 충분합니다.</p><label className="seed-input">세계 이름<input value={pendingWorldTitle} onChange={(event) => setPendingWorldTitle(event.target.value)} placeholder="예: 거꾸로 비가 내리는 항구" /></label><label className="seed-input">세계 씨앗<textarea value={pendingWorldSeed} onChange={(event) => setPendingWorldSeed(event.target.value)} placeholder="예: 비가 위로 내리는 항구 도시" rows={3} /></label><ChoiceButtons label="분위기" options={moodOptions} value={pendingMood} onChange={setPendingMood} /><ChoiceButtons label="장르" options={genreOptions} value={pendingGenre} onChange={setPendingGenre} /><ChoiceButtons label="동반자 방식" options={companionModes} value={pendingCompanionMode} onChange={setPendingCompanionMode} /><button className="seed-save-button" type="submit">이 세계 열기</button></form></dialog>}

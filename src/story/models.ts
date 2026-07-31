@@ -35,6 +35,16 @@ export type StoryScene = {
   acceptedAt: string;
 };
 
+export type StoryCanon = {
+  id: string;
+  worldId: string;
+  type: "setting" | "character" | "conflict" | "scene_hook";
+  title: string;
+  content: string;
+  sourceSessionId?: string | null;
+  createdAt?: string;
+};
+
 export type StoryRevisionRequest = {
   id: string;
   title: string;

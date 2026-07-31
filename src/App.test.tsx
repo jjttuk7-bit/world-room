@@ -17,7 +17,14 @@ beforeEach(() => {
         return { ok: true, json: async () => ({ worldId: "world-1", drafts: [] }) };
       }
       if (String(url).includes("/story")) {
-        return { ok: true, json: async () => ({ worldId: "world-1", scenes: [] }) };
+        return {
+          ok: true,
+          json: async () => ({
+            worldId: "world-1",
+            scenes: [{ id: "scene-1", worldId: "world-1", draftId: "draft-1", title: "안개 속의 나룻배", content: "유나는 물길이 사라진 운하에 작은 배를 띄웠다.", order: 1, acceptedAt: "2026-08-01T10:00:00.000Z", sourceTranscriptIds: ["turn-1"], relatedCanonIds: ["canon-1"] }],
+            canon: [{ id: "canon-1", worldId: "world-1", type: "character", title: "유나", content: "유나는 사라진 지도를 찾는 나룻배 사공이다.", sourceSessionId: "session-1", createdAt: "2026-08-01T09:00:00.000Z" }, { id: "canon-2", worldId: "world-1", type: "conflict", title: "사라진 물길", content: "새벽마다 운하 하나가 지도에서 사라진다.", sourceSessionId: "session-1", createdAt: "2026-08-01T09:00:00.000Z" }],
+          }),
+        };
       }
       return { ok: true, json: async () => ({}) };
     }),
@@ -76,6 +83,20 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: "세계 저장" })).toBeDisabled();
   });
 
+  it("새 세계를 열면 이전 세계의 저장된 원고와 세계 성경을 비운다", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1/story"));
+
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    fireEvent.change(screen.getByLabelText("세계 이름"), { target: { value: "새 항구" } });
+    fireEvent.click(screen.getByRole("button", { name: "이 세계 열기" }));
+    fireEvent.click(screen.getByRole("button", { name: "원고" }));
+
+    expect(screen.getByRole("heading", { name: "아직 채택된 장면이 없습니다" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "안개 속의 나룻배" })).not.toBeInTheDocument();
+  });
   it("새 세계 입력을 취소해도 현재 세계의 메타데이터를 바꾸지 않는다", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "보관함" }));
@@ -131,6 +152,24 @@ describe("World Room 앱", () => {
     fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
     expect(screen.getByRole("button", { name: "장면 초안 만들기" })).toBeDisabled();
     expect(screen.getByText("장면 초안은 대화가 충분히 쌓인 뒤 만들 수 있습니다.")).toBeInTheDocument();
+  });
+
+  it("저장된 원고를 순서대로 보여주고 세계 성경을 유형별 근거와 함께 묶는다", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1/story"));
+
+    fireEvent.click(screen.getByRole("button", { name: "원고" }));
+    expect(await screen.findByRole("heading", { name: "안개 속의 나룻배" })).toBeInTheDocument();
+    expect(screen.getByText("대화 근거 1개 · 세계 성경 1개")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "세계 성경" }));
+    expect(screen.getByRole("heading", { name: "인물" })).toBeInTheDocument();
+    expect(screen.getByText("유나는 사라진 지도를 찾는 나룻배 사공이다.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "미해결 갈등" })).toBeInTheDocument();
+    expect(screen.getByText("새벽마다 운하 하나가 지도에서 사라진다.")).toBeInTheDocument();
+    expect(screen.getAllByText(/세션 근거/)).toHaveLength(2);
   });
   it("저장된 세계를 삭제할 수 있다", async () => {
     render(<App />);

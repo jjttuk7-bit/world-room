@@ -425,7 +425,11 @@ export async function getWorldStory(worldId, options = {}) {
   const repository = options.repository ?? createDefaultRepository();
   if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
   await repository.assertWorldOwned(cleanWorldId);
-  return { worldId: cleanWorldId, scenes: await repository.listWorldManuscript(cleanWorldId, { worldChecked: true }) };
+  const [scenes, canon] = await Promise.all([
+    repository.listWorldManuscript(cleanWorldId, { worldChecked: true }),
+    repository.listWorldCanon(cleanWorldId, { worldChecked: true }),
+  ]);
+  return { worldId: cleanWorldId, scenes, canon };
 }
 
 export async function listWorldDrafts(worldId, options = {}) {
@@ -780,6 +784,21 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
       }));
     },
 
+    async listWorldCanon(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase
+          .from("canon_cards")
+          .select("id,world_id,type,title,content,source_session_id,created_at")
+          .eq("world_id", worldId)
+          .eq("owner_id", ownerId)
+          .order("created_at", { ascending: true }),
+      );
+      return (result.data ?? []).map((card) => ({
+        id: card.id, worldId: card.world_id, type: card.type, title: card.title, content: card.content,
+        sourceSessionId: card.source_session_id, createdAt: card.created_at,
+      }));
+    },
     async listStoryDrafts(worldId, { worldChecked = false } = {}) {
       if (!worldChecked) await assertWorldOwned(worldId);
       const result = await assertNoError(

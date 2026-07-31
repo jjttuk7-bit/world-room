@@ -155,3 +155,11 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 .manuscript-scene > span, .manuscript-scene small { color: var(--amber); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .7rem; font-weight: 800; }
 .manuscript-scene h3 { margin: .7rem 0; font-size: 1.55rem; font-weight: 500; }
 .manuscript-scene p { color: var(--soft-ink); line-height: 1.9; white-space: pre-wrap; }
+.scene-source-links { margin: .6rem 0 0; color: var(--muted); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .76rem; line-height: 1.55; }
+.bible-columns article > h3 { margin: .1rem 0 1rem; color: var(--amber); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .78rem; font-weight: 800; }
+.canon-card-list { display: grid; gap: .7rem; }
+.canon-card { border-inline-start: 2px solid rgba(145,183,191,.55); padding-inline-start: .7rem; }
+.canon-card h4 { margin: 0; color: var(--ink); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .86rem; }
+.canon-card p { margin: .4rem 0; color: var(--soft-ink); font-size: .88rem; line-height: 1.65; }
+.canon-card small { color: var(--muted); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .68rem; }
+.empty-canon { color: var(--muted); font-size: .86rem; line-height: 1.65; }
