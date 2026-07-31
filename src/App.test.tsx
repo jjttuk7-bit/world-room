@@ -52,6 +52,34 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: "선택지 제안" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("이어 보던 세계에서 새 세계를 열면 이전 세계 연결과 세션 기록을 비운다", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+    expect(screen.getByText("안개 도시", { selector: ".world-name" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    expect(screen.getByLabelText("세계 이름")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("세계 이름"), { target: { value: "유리 바다" } });
+    fireEvent.change(screen.getByLabelText("세계 씨앗"), { target: { value: "파도 아래 도서관" } });
+    fireEvent.click(screen.getByRole("button", { name: "이 세계 열기" }));
+
+    expect(screen.queryByRole("dialog", { name: "새 세계 열기" })).not.toBeInTheDocument();
+    expect(screen.getByText("유리 바다", { selector: ".world-name" })).toBeInTheDocument();
+    expect(screen.queryByText("안개 도시", { selector: ".world-name" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "세계 저장" })).toBeDisabled();
+  });
+
+  it("새 세계 대화상자는 취소한 뒤 다시 열 수 있다", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    const dialog = screen.getByRole("dialog", { name: "새 세계 열기" });
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    expect(screen.queryByRole("dialog", { name: "새 세계 열기" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "새 세계" }));
+    expect(screen.getByRole("dialog", { name: "새 세계 열기" })).toBeInTheDocument();
+  });
   it("원고와 세계 성경 모드에서 각각의 작업 맥락을 연다", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "원고" }));

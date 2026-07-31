@@ -23,6 +23,15 @@ const moodOptions = ["몽환적", "어두운", "따뜻한", "기묘한", "모험
 const genreOptions = ["판타지", "SF", "미스터리", "호러", "동화", "동양풍"];
 const companionModes = ["질문 위주", "선택지 제안", "장면 묘사", "인물 중심"];
 
+function createWelcomeTranscript(): TranscriptLine[] {
+  return [{
+    id: "welcome",
+    speaker: "시스템",
+    text: "세션을 시작하면 World Room 동반자가 한국어 음성으로 세계, 인물, 갈등, 장면 훅을 함께 만들어줍니다.",
+    final: true,
+  }];
+}
+
 const validationItems = [
   "브라우저가 마이크 권한을 요청하고, 거부 시 오류 문구가 보이는가",
   "세션 시작 후 상태가 연결 중에서 대화 준비로 바뀌는가",
@@ -302,6 +311,31 @@ export default function App() {
     }
   }
 
+  function openNewWorld() {
+    setWorldTitle("");
+    setWorldSeed("");
+    setMood(moodOptions[0]);
+    setGenre(genreOptions[0]);
+    setCompanionMode(companionModes[0]);
+    setError("");
+    setSaveStatus("");
+    setSeedOpen(true);
+  }
+
+  function commitNewWorld() {
+    stopSession(false);
+    setSelectedWorld(null);
+    setTranscript(createWelcomeTranscript());
+    setSparks([]);
+    setSessionState("idle");
+    setMuted(false);
+    setError("");
+    setSaveStatus("");
+    setLibraryOpen(false);
+    setActiveMode("conversation");
+    setSeedOpen(false);
+    setStatusText("새 세계의 첫 문장을 기다리고 있습니다.");
+  }
   function continueWorld(world: RecentWorld) {
     setSelectedWorld(world);
     setStatusText(`${world.title} 이어 말하기 준비`);
@@ -379,7 +413,7 @@ export default function App() {
       <header className="studio-header">
         <div className="studio-ident"><p className="eyebrow">Private writing studio</p><h1>World Room</h1><p className="world-name">{selectedWorld?.title || worldTitle || "아직 이름 없는 세계"}</p></div>
         <nav className="mode-nav" aria-label="작업 모드">{modeLabels.map((mode) => <button key={mode.id} type="button" aria-pressed={activeMode === mode.id} onClick={() => setActiveMode(mode.id)}>{mode.label}</button>)}</nav>
-        <div className="header-actions"><button className="text-button" type="button" onClick={() => setLibraryOpen((current) => !current)} aria-expanded={libraryOpen}>보관함</button><button className="new-world-button" type="button" onClick={() => setSeedOpen(true)}>새 세계</button></div>
+        <div className="header-actions"><button className="text-button" type="button" onClick={() => setLibraryOpen((current) => !current)} aria-expanded={libraryOpen}>보관함</button><button className="new-world-button" type="button" onClick={openNewWorld}>새 세계</button></div>
       </header>
       {(error || saveStatus) && <p className="studio-notice" role="status">{error || saveStatus}</p>}
       <section className="studio-content" id="studio-content">
@@ -392,7 +426,7 @@ export default function App() {
         {activeMode === "bible" && <section className="writing-view" aria-labelledby="bible-title"><p className="eyebrow">World bible</p><h2 id="bible-title">세계 성경</h2><p className="view-lead">인물, 장소, 규칙과 사건을 대화의 근거와 함께 보관합니다.</p><div className="bible-columns"><article><span>인물</span><p>대화에서 인물이 구체화되면 이곳에 연결됩니다.</p></article><article><span>장소와 규칙</span><p>세계의 질서를 흔들지 않도록 기록합니다.</p></article><article><span>미해결 갈등</span><p>다음 장면에서 다시 꺼낼 긴장을 모읍니다.</p></article></div></section>}
       </section>
       {libraryOpen && <aside className="library-panel" aria-label="작업 보관함"><div className="panel-heading"><div><p className="eyebrow">Saved worlds</p><h2>최근 세계</h2></div><button className="text-button" type="button" onClick={() => setLibraryOpen(false)}>닫기</button></div><div className="world-card-grid">{recentWorlds.length ? recentWorlds.map((world) => <article className={selectedWorld?.id === world.id ? "world-card selected" : "world-card"} key={world.id}><span>{world.updatedAt ? new Date(world.updatedAt).toLocaleDateString("ko-KR") : "최근 저장"}</span><h3>{world.title}</h3><p>{world.summary}</p><div className="world-card-actions"><button onClick={() => { continueWorld(world); setLibraryOpen(false); }}>{world.title} 이어 말하기</button><button className="danger-button" onClick={() => void deleteWorld(world)}>{world.title} 삭제</button></div></article>) : <p className="empty-panel-copy">저장한 세계가 아직 없습니다.</p>}</div></aside>}
-      {seedOpen && <dialog className="seed-dialog" open aria-label="새 세계 열기"><form method="dialog" onSubmit={(event) => { event.preventDefault(); setSeedOpen(false); setStatusText("새 세계의 첫 문장을 기다리고 있습니다."); }}><div className="dialog-heading"><div><p className="eyebrow">New world</p><h2>새 세계 열기</h2></div><button className="text-button" type="button" onClick={() => setSeedOpen(false)}>닫기</button></div><p>완벽한 설정은 필요 없습니다. 한 줄의 씨앗이면 충분합니다.</p><label className="seed-input">세계 이름<input value={worldTitle} onChange={(event) => setWorldTitle(event.target.value)} placeholder="예: 거꾸로 비가 내리는 항구" /></label><label className="seed-input">세계 씨앗<textarea value={worldSeed} onChange={(event) => setWorldSeed(event.target.value)} placeholder="예: 비가 위로 내리는 항구 도시" rows={3} /></label><ChoiceButtons label="분위기" options={moodOptions} value={mood} onChange={setMood} /><ChoiceButtons label="장르" options={genreOptions} value={genre} onChange={setGenre} /><ChoiceButtons label="동반자 방식" options={companionModes} value={companionMode} onChange={setCompanionMode} /><button className="seed-save-button" type="submit">이 세계 열기</button></form></dialog>}
+      {seedOpen && <dialog className="seed-dialog" open aria-label="새 세계 열기" onCancel={(event) => { event.preventDefault(); setSeedOpen(false); }} onClose={() => setSeedOpen(false)}><form method="dialog" onSubmit={(event) => { event.preventDefault(); commitNewWorld(); }}><div className="dialog-heading"><div><p className="eyebrow">New world</p><h2>새 세계 열기</h2></div><button className="text-button" type="button" onClick={() => setSeedOpen(false)}>닫기</button></div><p>완벽한 설정은 필요 없습니다. 한 줄의 씨앗이면 충분합니다.</p><label className="seed-input">세계 이름<input value={worldTitle} onChange={(event) => setWorldTitle(event.target.value)} placeholder="예: 거꾸로 비가 내리는 항구" /></label><label className="seed-input">세계 씨앗<textarea value={worldSeed} onChange={(event) => setWorldSeed(event.target.value)} placeholder="예: 비가 위로 내리는 항구 도시" rows={3} /></label><ChoiceButtons label="분위기" options={moodOptions} value={mood} onChange={setMood} /><ChoiceButtons label="장르" options={genreOptions} value={genre} onChange={setGenre} /><ChoiceButtons label="동반자 방식" options={companionModes} value={companionMode} onChange={setCompanionMode} /><button className="seed-save-button" type="submit">이 세계 열기</button></form></dialog>}
     </main>
   );
 }
