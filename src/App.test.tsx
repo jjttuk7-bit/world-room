@@ -26,6 +26,24 @@ beforeEach(() => {
           }),
         };
       }
+      if (String(url).includes("/brief")) {
+        return {
+          ok: true,
+          json: async () => ({
+            worldId: "world-1",
+            brief: {
+              id: "brief-1",
+              worldId: "world-1",
+              intent: "사라진 지도를 찾는 사공의 첫 항해",
+              conflict: "도시는 지도를 금지한다.",
+              tone: "고요하고 불길하게",
+              requiredElements: ["역류하는 비"],
+              sessionGoal: "첫 선택을 찾는다.",
+              approved: true,
+            },
+          }),
+        };
+      }
       return { ok: true, json: async () => ({}) };
     }),
   );
@@ -225,5 +243,46 @@ describe("World Room 앱", () => {
     fireEvent.click(screen.getByRole("button", { name: "보관함" }));
     fireEvent.click(await screen.findByRole("button", { name: /안개 도시 삭제/ }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1", { method: "DELETE" }));
+  });
+  it("저장된 세계의 브리프를 불러와 명시적으로 이어 말하기를 선택한 뒤에만 대화를 시작한다", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1/brief"));
+    expect(screen.getByRole("button", { name: "지난 브리프로 이어가기" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "브리프를 먼저 정리하세요" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "지난 브리프로 이어가기" }));
+
+    expect(screen.getByRole("button", { name: "대화 시작" })).toBeEnabled();
+  });
+
+  it("저장된 세계에서 새 브리프를 승인하면 활성 브리프를 저장한다", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/worlds/recent")) return { ok: true, json: async () => ({ worlds: [{ id: "world-1", title: "안개 도시", summary: "밤마다 골목이 바뀌는 도시.", continuityBrief: "", updatedAt: "2026-05-27T18:33:21.000Z" }] }) } as Response;
+      if (url === "/api/worlds/world-1/brief" && !options?.method) return { ok: true, json: async () => ({ worldId: "world-1", brief: null }) } as Response;
+      if (url === "/api/creative-brief") return { ok: true, json: async () => ({ intent: "사라진 지도 제작자의 귀환", conflict: "도시는 지도를 금지한다.", tone: "고요하고 불길하게", requiredElements: ["역류하는 비"], sessionGoal: "첫 장면을 연다.", approved: false }) } as Response;
+      if (url === "/api/worlds/world-1/brief" && options?.method === "POST") return { ok: true, json: async () => ({ id: "brief-2", worldId: "world-1", approved: true }) } as Response;
+      if (url.includes("/story/drafts")) return { ok: true, json: async () => ({ worldId: "world-1", drafts: [] }) } as Response;
+      if (url.includes("/story")) return { ok: true, json: async () => ({ worldId: "world-1", scenes: [], canon: [] }) } as Response;
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1/brief"));
+    fireEvent.change(screen.getByRole("textbox", { name: "만들고 싶은 이야기" }), { target: { value: "지도 제작자의 귀환" } });
+    fireEvent.click(screen.getByRole("button", { name: "방향 정리하기" }));
+    await screen.findByRole("button", { name: "이 브리프로 대화 시작" });
+    fireEvent.click(screen.getByRole("button", { name: "이 브리프로 대화 시작" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/worlds/world-1/brief", expect.objectContaining({
+      method: "POST",
+      body: expect.stringContaining('"approved":true'),
+    })));
   });
 });

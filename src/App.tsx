@@ -14,6 +14,7 @@ const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? "/api/worlds/r
 const worldsUrl = import.meta.env.VITE_WORLDS_URL ?? "/api/worlds";
 const storyDraftsUrl = import.meta.env.VITE_STORY_DRAFTS_URL ?? "/api/story/drafts";
 const creativeBriefUrl = import.meta.env.VITE_CREATIVE_BRIEF_URL ?? "/api/creative-brief";
+const worldBriefUrl = (worldId: string) => `${worldsUrl}/${encodeURIComponent(worldId)}/brief`;
 
 type RecentWorld = {
   id: string;
@@ -92,6 +93,8 @@ export default function App() {
   const [revisionBody, setRevisionBody] = useState("");
   const [briefInput, setBriefInput] = useState("");
   const [creativeBrief, setCreativeBrief] = useState<CreativeBrief | null>(null);
+  const [savedCreativeBrief, setSavedCreativeBrief] = useState<CreativeBrief | null>(null);
+  const [isReworkingBrief, setIsReworkingBrief] = useState(false);
   const [briefAction, setBriefAction] = useState(false);
   const [briefError, setBriefError] = useState("");
 
@@ -154,21 +157,26 @@ export default function App() {
     setDraftAction("load");
     setDraftError("");
     try {
-      const [draftResponse, storyResponse] = await Promise.all([
+      const [draftResponse, storyResponse, briefResponse] = await Promise.all([
         fetch(`${storyDraftsUrl}?worldId=${encodeURIComponent(worldId)}`),
         fetch(`${worldsUrl}/${encodeURIComponent(worldId)}/story`),
+        fetch(worldBriefUrl(worldId)),
       ]);
-      const [draftResult, storyResult] = await Promise.all([draftResponse.json(), storyResponse.json()]);
+      const [draftResult, storyResult, briefResult] = await Promise.all([draftResponse.json(), storyResponse.json(), briefResponse.json()]);
       if (!draftResponse.ok) throw new Error(draftResult.error?.message ?? "저장된 초안을 불러오지 못했습니다.");
       if (!storyResponse.ok) throw new Error(storyResult.error?.message ?? "저장된 원고를 불러오지 못했습니다.");
+      if (!briefResponse.ok) throw new Error(briefResult.error?.message ?? "저장된 창작 브리프를 불러오지 못했습니다.");
       setDrafts(draftResult.drafts ?? []);
       setScenes(storyResult.scenes ?? []);
       setCanon(storyResult.canon ?? []);
+      setSavedCreativeBrief(briefResult.brief ?? null);
+      setCreativeBrief(null);
+      setBriefInput("");
+      setIsReworkingBrief(false);
     } catch (caught) {
       setDraftError(caught instanceof Error ? caught.message : "창작 기록을 불러오지 못했습니다.");
     } finally { setDraftAction(""); }
   }
-
   async function startSession() {
     if (!canStartSession) { setBriefError("대화를 시작하기 전에 오늘 만들 이야기를 먼저 정리해 주세요."); return; }
     if (sessionState === "requesting" || sessionState === "connecting") return;
@@ -349,12 +357,43 @@ export default function App() {
     } catch (caught) { setBriefError(caught instanceof Error ? caught.message : "창작 브리프를 제안하지 못했습니다."); } finally { setBriefAction(false); }
   }
 
-  function approveCreativeBrief() {
+  async function approveCreativeBrief() {
     if (!creativeBrief) return;
-    setCreativeBrief({ ...creativeBrief, approved: true });
+    const approvedBrief = { ...creativeBrief, approved: true };
+    setCreativeBrief(approvedBrief);
     setBriefError("");
     setStatusText("오늘의 창작 브리프가 준비되었습니다.");
+    if (!selectedWorld) return;
+
+    setBriefAction(true);
+    setSaveStatus("창작 브리프 저장 중");
+    try {
+      const response = await fetch(worldBriefUrl(selectedWorld.id), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(approvedBrief),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error?.message ?? "창작 브리프를 저장하지 못했습니다.");
+      setSavedCreativeBrief({ ...approvedBrief, ...result, approved: true });
+      setIsReworkingBrief(false);
+      setSaveStatus("창작 브리프를 이 세계에 저장했습니다.");
+    } catch (caught) {
+      setBriefError(caught instanceof Error ? caught.message : "창작 브리프를 저장하지 못했습니다.");
+      setSaveStatus("");
+    } finally {
+      setBriefAction(false);
+    }
   }
+
+  function reuseSavedCreativeBrief() {
+    if (!savedCreativeBrief) return;
+    setCreativeBrief({ ...savedCreativeBrief, approved: true });
+    setIsReworkingBrief(false);
+    setBriefError("");
+    setStatusText("지난 창작 브리프를 이어서 대화할 준비가 되었습니다.");
+  }
+
   async function saveWorldSession() {
     if (!canSaveWorld || isSaving) return;
 
@@ -433,6 +472,10 @@ export default function App() {
     setDrafts([]);
     setScenes([]);
     setCanon([]);
+    setCreativeBrief(null);
+    setSavedCreativeBrief(null);
+    setBriefInput("");
+    setIsReworkingBrief(false);
     setSessionState("idle");
     setMuted(false);
     setError("");
@@ -447,6 +490,10 @@ export default function App() {
     setDrafts([]);
     setScenes([]);
     setCanon([]);
+    setCreativeBrief(null);
+    setSavedCreativeBrief(null);
+    setBriefInput("");
+    setIsReworkingBrief(false);
     setStatusText(`${world.title} 이어 말하기 준비`);
     void loadStoryWorkspace(world.id);
   }
@@ -565,7 +612,7 @@ export default function App() {
           <div className="conversation-intro"><p className="eyebrow">오늘의 장면</p><h2 id="conversation-title">{creativeBrief?.approved ? "말로 다음 장면을 찾아보세요" : "어떤 이야기를 만들고 싶으세요?"}</h2><p>{creativeBrief?.approved ? "동반자와 이야기하면, 결정된 설정과 장면의 실마리가 이 세계의 기록으로 남습니다." : "먼저 한 줄로 방향을 적어 주세요. World Room이 오늘의 창작 브리프로 정리한 뒤, 당신이 확인한 방향에서만 대화를 엽니다."}</p></div>
           <section className="creative-brief" aria-labelledby="brief-title">
             <div><p className="eyebrow">Before voice</p><h3 id="brief-title">오늘의 창작 브리프</h3></div>
-            {!creativeBrief ? <><label>만들고 싶은 이야기<textarea aria-label="만들고 싶은 이야기" value={briefInput} onChange={(event) => setBriefInput(event.target.value)} placeholder="예: 기억을 잃은 잠수사의 첫 귀환 장면을 만들고 싶어요." rows={3} /></label><button type="button" className="primary-button" onClick={() => void proposeCreativeBrief()} disabled={briefAction}>{briefAction ? "방향을 정리하는 중" : "방향 정리하기"}</button></> : <><dl><div><dt>창작 의도</dt><dd>{creativeBrief.intent}</dd></div>{creativeBrief.conflict && <div><dt>핵심 갈등</dt><dd>{creativeBrief.conflict}</dd></div>}{creativeBrief.tone && <div><dt>분위기와 문체</dt><dd>{creativeBrief.tone}</dd></div>}{creativeBrief.requiredElements.length > 0 && <div><dt>반드시 포함할 요소</dt><dd>{creativeBrief.requiredElements.join(" · ")}</dd></div>}{creativeBrief.sessionGoal && <div><dt>이번 대화의 목표</dt><dd>{creativeBrief.sessionGoal}</dd></div>}</dl>{creativeBrief.approved ? <p className="brief-approved">이 방향으로 대화를 시작합니다. 동반자는 먼저 어느 장면부터 열지 질문합니다.</p> : <div className="brief-actions"><button type="button" className="text-button" onClick={() => setCreativeBrief(null)}>다시 정리</button><button type="button" className="primary-button" onClick={approveCreativeBrief}>이 브리프로 대화 시작</button></div>}</>}
+            {savedCreativeBrief && !creativeBrief && !isReworkingBrief ? <><p className="brief-history-label">이 세계에 마지막으로 승인한 방향입니다.</p><dl><div><dt>창작 의도</dt><dd>{savedCreativeBrief.intent}</dd></div>{savedCreativeBrief.conflict && <div><dt>핵심 갈등</dt><dd>{savedCreativeBrief.conflict}</dd></div>}{savedCreativeBrief.tone && <div><dt>분위기와 문체</dt><dd>{savedCreativeBrief.tone}</dd></div>}{savedCreativeBrief.requiredElements.length > 0 && <div><dt>반드시 포함할 요소</dt><dd>{savedCreativeBrief.requiredElements.join(" · ")}</dd></div>}{savedCreativeBrief.sessionGoal && <div><dt>이번 대화의 목표</dt><dd>{savedCreativeBrief.sessionGoal}</dd></div>}</dl><div className="brief-actions"><button type="button" className="text-button" onClick={() => setIsReworkingBrief(true)}>다시 정리</button><button type="button" className="primary-button" onClick={reuseSavedCreativeBrief}>지난 브리프로 이어가기</button></div></> : !creativeBrief ? <><label>만들고 싶은 이야기<textarea aria-label="만들고 싶은 이야기" value={briefInput} onChange={(event) => setBriefInput(event.target.value)} placeholder="예: 기억을 잃은 잠수사의 첫 귀환 장면을 만들고 싶어요." rows={3} /></label><button type="button" className="primary-button" onClick={() => void proposeCreativeBrief()} disabled={briefAction}>{briefAction ? "방향을 정리하는 중" : "방향 정리하기"}</button></> : <><dl><div><dt>창작 의도</dt><dd>{creativeBrief.intent}</dd></div>{creativeBrief.conflict && <div><dt>핵심 갈등</dt><dd>{creativeBrief.conflict}</dd></div>}{creativeBrief.tone && <div><dt>분위기와 문체</dt><dd>{creativeBrief.tone}</dd></div>}{creativeBrief.requiredElements.length > 0 && <div><dt>반드시 포함할 요소</dt><dd>{creativeBrief.requiredElements.join(" · ")}</dd></div>}{creativeBrief.sessionGoal && <div><dt>이번 대화의 목표</dt><dd>{creativeBrief.sessionGoal}</dd></div>}</dl>{creativeBrief.approved ? <p className="brief-approved">이 방향으로 대화를 시작합니다. 동반자는 먼저 어느 장면부터 열지 질문합니다.</p> : <div className="brief-actions"><button type="button" className="text-button" onClick={() => { setCreativeBrief(null); setIsReworkingBrief(false); }}>다시 정리</button><button type="button" className="primary-button" onClick={() => void approveCreativeBrief()} disabled={briefAction}>{briefAction ? "저장하는 중" : "이 브리프로 대화 시작"}</button></div>}</>}
             {briefError && <p className="draft-feedback error" role="status">{briefError}</p>}
           </section>
           <div className="conversation-layout"><section className="transcript-sheet" aria-label="대화 기록"><div className="sheet-heading"><span>대화 기록</span><span>{stateLabel}</span></div><div className="transcript-list">{transcript.map((line) => <article className={`line ${line.speaker === "사용자" ? "user" : "assistant"}`} key={line.id}><span>{line.speaker}</span><p>{line.text}</p></article>)}</div></section><aside className="conversation-margin" aria-label="대화 단서와 장면 초안">
