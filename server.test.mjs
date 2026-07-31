@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, saveSessionRecord } from "./server.mjs";
+import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, generateStoryDraft, getWorldStory, saveSessionRecord, validateStoryDraftRequest } from "./server.mjs";
 
 describe("World Room 세션 저장", () => {
   it("transcript와 sparks를 Supabase 저장 record로 정리한다", async () => {
@@ -290,5 +290,47 @@ describe("비공개 이야기 작업실 스키마", () => {
     expect(schema).toMatch(/alter table public\.story_drafts enable row level security/);
     expect(schema).toMatch(/revoke all on function public\.revise_story_draft[\s\S]*?from public, anon, authenticated/);
     expect(schema).toMatch(/revoke all on function public\.accept_story_draft[\s\S]*?from public, anon, authenticated/);
+  });
+});
+
+describe("장면 초안 생성", () => {
+  const request = {
+    worldId: "world-1",
+    sessionId: "session-1",
+    world: { title: "역류항", continuityBrief: "비가 하늘로 솟는 항구 도시다." },
+    transcript: [
+      { id: "line-1", speaker: "사용자", text: "잠수사가 금지된 지도를 찾게 하자." },
+      { id: "line-2", speaker: "동반자", text: "그 지도는 수면 위로 가는 길을 가리킵니다." },
+    ],
+    canon: [{ id: "canon-1", type: "setting", content: "비는 바다에서 하늘로 오른다." }],
+  };
+
+  it("허용된 대화와 세계 성경 범위를 벗어난 요청을 거절한다", () => {
+    expect(() => validateStoryDraftRequest({ ...request, transcript: Array.from({ length: 17 }, (_, index) => ({ id: `${index}`, text: "대화" })) }))
+      .toThrow("대화 맥락은 최대 16개까지 사용할 수 있습니다.");
+    expect(() => validateStoryDraftRequest({ ...request, world: { continuityBrief: "가".repeat(3001) } }))
+      .toThrow("세계 설명은 3000자 이하여야 합니다.");
+  });
+
+  it("Responses API의 구조화된 초안을 원본 근거에만 연결한다", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ output_text: JSON.stringify({ title: "금지된 지도", body: "잠수사는 방파제 아래에서 젖지 않는 지도를 발견했다. 지도 위의 선은 하늘을 향해 흐르는 빗줄기를 따라 항구 밖으로 이어졌다. 그는 수면 위에 남아 있을지도 모를 기억을 떠올렸다.", sourceTranscriptIds: ["line-1"], relatedCanonIds: ["canon-1"] }) }),
+    }));
+    await expect(generateStoryDraft(request, { apiKey: "test-key", fetchImpl })).resolves.toMatchObject({ worldId: "world-1", sessionId: "session-1", title: "금지된 지도", sourceTranscriptIds: ["line-1"], relatedCanonIds: ["canon-1"], status: "proposed" });
+    expect(fetchImpl).toHaveBeenCalledWith("https://api.openai.com/v1/responses", expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer test-key" }) }));
+  });
+
+  it("응답이 제공되지 않은 근거 ID를 참조하면 거절한다", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ output_text: JSON.stringify({ title: "잘못된 근거", body: "첫 문장이다. 둘째 문장이다. 셋째 문장이다.", sourceTranscriptIds: ["outside"], relatedCanonIds: [] }) }),
+    }));
+    await expect(generateStoryDraft(request, { apiKey: "test-key", fetchImpl })).rejects.toThrow("초안이 제공되지 않은 대화 근거를 참조했습니다.");
+  });
+  it("세계 원고 조회는 소유자 범위 저장소 결과를 반환한다", async () => {
+    const repository = { listWorldManuscript: vi.fn(async (worldId) => [{ id: "scene-1", worldId, order: 1 }]) };
+    await expect(getWorldStory("world-1", { repository })).resolves.toEqual({ worldId: "world-1", scenes: [{ id: "scene-1", worldId: "world-1", order: 1 }] });
+    expect(repository.listWorldManuscript).toHaveBeenCalledWith("world-1");
   });
 });

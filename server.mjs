@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
@@ -284,6 +284,144 @@ ${(payload.sparks ?? []).join("\n")}`,
   return JSON.parse(text);
 }
 
+const STORY_LIMITS = Object.freeze({
+  worldCharacters: 3000,
+  transcriptItems: 16,
+  transcriptCharacters: 10000,
+  canonItems: 24,
+  canonCharacters: 6000,
+  itemCharacters: 1000,
+});
+
+function boundedText(value, label, max) {
+  const text = String(value ?? "").trim();
+  if (text.length > max) throw new Error(`${label}은 ${max}자 이하여야 합니다.`);
+  return text;
+}
+
+function uniqueIds(items) {
+  return [...new Set(items.map((item) => String(item.id ?? "").trim()).filter(Boolean))];
+}
+
+function parseResponseText(data) {
+  const text = data.output_text ?? data.output?.flatMap((item) => item.content ?? []).find((item) => item.text)?.text;
+  if (!text) throw new Error("장면 초안 응답이 비어 있습니다.");
+  try { return JSON.parse(text); } catch { throw new Error("장면 초안 응답 형식이 올바르지 않습니다."); }
+}
+
+function sentenceCount(body) {
+  return String(body).trim().split(/[.!?…。]+(?:\s|$)/).filter(Boolean).length;
+}
+
+export function validateStoryDraftRequest(payload) {
+  const worldId = String(payload?.worldId ?? "").trim();
+  if (!worldId) throw new Error("세계 ID가 필요합니다.");
+  const sessionId = String(payload?.sessionId ?? "").trim() || null;
+  const worldTitle = boundedText(payload?.world?.title, "세계 제목", 160);
+  const continuityBrief = boundedText(payload?.world?.continuityBrief ?? payload?.world?.summary, "세계 설명", STORY_LIMITS.worldCharacters);
+  const rawTranscript = Array.isArray(payload?.transcript) ? payload.transcript : [];
+  if (!rawTranscript.length) throw new Error("장면 초안에 사용할 대화가 없습니다.");
+  if (rawTranscript.length > STORY_LIMITS.transcriptItems) throw new Error("대화 맥락은 최대 16개까지 사용할 수 있습니다.");
+  const transcript = rawTranscript.map((line) => ({
+    id: boundedText(line?.id, "대화 ID", 160),
+    speaker: boundedText(line?.speaker ?? "대화자", "화자", 80),
+    text: boundedText(line?.text, "대화 내용", STORY_LIMITS.itemCharacters),
+  }));
+  if (transcript.some((line) => !line.id || !line.text)) throw new Error("대화 ID와 내용이 필요합니다.");
+  if (transcript.reduce((total, line) => total + line.text.length, 0) > STORY_LIMITS.transcriptCharacters) throw new Error("대화 맥락이 너무 깁니다.");
+  const rawCanon = Array.isArray(payload?.canon) ? payload.canon : [];
+  if (rawCanon.length > STORY_LIMITS.canonItems) throw new Error("세계 성경은 최대 24개까지 사용할 수 있습니다.");
+  const canon = rawCanon.map((card) => ({
+    id: boundedText(card?.id, "세계 성경 ID", 160),
+    type: boundedText(card?.type ?? "setting", "세계 성경 종류", 80),
+    content: boundedText(card?.content, "세계 성경 내용", STORY_LIMITS.itemCharacters),
+  }));
+  if (canon.some((card) => !card.id || !card.content)) throw new Error("세계 성경 ID와 내용이 필요합니다.");
+  if (canon.reduce((total, card) => total + card.content.length, 0) > STORY_LIMITS.canonCharacters) throw new Error("세계 성경 맥락이 너무 깁니다.");
+  return { worldId, sessionId, world: { title: worldTitle, continuityBrief }, transcript, canon };
+}
+
+export async function generateStoryDraft(payload, options = {}) {
+  const context = validateStoryDraftRequest(payload);
+  const secret = options.apiKey ?? apiKey;
+  if (!secret) throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": safetyIdentifier() },
+    body: JSON.stringify({
+      model: process.env.OPENAI_STORY_MODEL ?? summaryModel,
+      input: [{ role: "system", content: "당신은 한국어 소설 창작 스튜디오의 장면 초안 작가입니다. 제공된 세계와 대화 근거만 사용해 3~6문장의 응집된 장면을 작성합니다. 설정을 확정하지 말고 제안으로 씁니다." }, { role: "user", content: JSON.stringify(context) }],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "world_room_story_draft",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "body", "sourceTranscriptIds", "relatedCanonIds"],
+            properties: {
+              title: { type: "string" },
+              body: { type: "string" },
+              sourceTranscriptIds: { type: "array", items: { type: "string" } },
+              relatedCanonIds: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+      },
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message ?? "장면 초안 생성에 실패했습니다.");
+  const generated = parseResponseText(data);
+  const title = boundedText(generated.title, "초안 제목", 160);
+  const body = boundedText(generated.body, "초안 본문", 5000);
+  const sentences = sentenceCount(body);
+  if (sentences < 3 || sentences > 6) throw new Error("장면 초안은 3~6문장이어야 합니다.");
+  const sourceTranscriptIds = uniqueIds(Array.isArray(generated.sourceTranscriptIds) ? generated.sourceTranscriptIds.map((id) => ({ id })) : []);
+  const relatedCanonIds = uniqueIds(Array.isArray(generated.relatedCanonIds) ? generated.relatedCanonIds.map((id) => ({ id })) : []);
+  const availableTranscriptIds = new Set(uniqueIds(context.transcript));
+  const availableCanonIds = new Set(uniqueIds(context.canon));
+  if (sourceTranscriptIds.some((id) => !availableTranscriptIds.has(id))) throw new Error("초안이 제공되지 않은 대화 근거를 참조했습니다.");
+  if (relatedCanonIds.some((id) => !availableCanonIds.has(id))) throw new Error("초안이 제공되지 않은 세계 성경 근거를 참조했습니다.");
+  return { id: `draft-${randomUUID()}`, worldId: context.worldId, sessionId: context.sessionId, title, body, status: "proposed", sourceTranscriptIds, relatedCanonIds, createdAt: new Date().toISOString() };
+}
+
+export async function createGeneratedStoryDraft(payload, options = {}) {
+  const draft = await generateStoryDraft(payload, options);
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  return repository.insertStoryDraft(draft);
+}
+export async function getWorldStory(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new Error("세계 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  return { worldId: cleanWorldId, scenes: await repository.listWorldManuscript(cleanWorldId) };
+}
+
+export async function reviseSavedStoryDraft(worldId, draftId, payload, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  const cleanDraftId = String(draftId ?? "").trim();
+  if (!cleanWorldId || !cleanDraftId) throw new Error("세계 ID와 초안 ID가 필요합니다.");
+  const title = boundedText(payload?.title, "초안 제목", 160);
+  const body = boundedText(payload?.body, "초안 본문", 5000);
+  const sentences = sentenceCount(body);
+  if (sentences < 3 || sentences > 6) throw new Error("장면 초안은 3~6문장이어야 합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  return repository.reviseStoryDraft(cleanWorldId, cleanDraftId, { id: `draft-${randomUUID()}`, title, body, createdAt: new Date().toISOString() });
+}
+
+export async function acceptSavedStoryDraft(worldId, draftId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  const cleanDraftId = String(draftId ?? "").trim();
+  if (!cleanWorldId || !cleanDraftId) throw new Error("세계 ID와 초안 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  return repository.acceptStoryDraft(cleanWorldId, cleanDraftId);
+}
 export function buildSessionRecord(payload, options = {}) {
   const now = options.now ?? new Date();
   const stamp = formatTimestamp(now);
