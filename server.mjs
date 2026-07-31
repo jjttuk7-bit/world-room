@@ -466,6 +466,141 @@ export function createSupabaseRepository(supabase) {
       }));
     },
 
+    async insertStoryDraft(draft) {
+      await assertNoError(
+        await supabase.from("story_drafts").insert({
+          id: draft.id,
+          world_id: draft.worldId,
+          session_id: draft.sessionId ?? null,
+          title: draft.title,
+          body: draft.body,
+          status: draft.status ?? "proposed",
+          source_transcript_ids: [...(draft.sourceTranscriptIds ?? [])],
+          related_canon_ids: [...(draft.relatedCanonIds ?? [])],
+          parent_draft_id: draft.parentDraftId ?? null,
+          created_at: draft.createdAt ?? new Date().toISOString(),
+        }),
+      );
+      return { ...draft };
+    },
+
+    async reviseStoryDraft(worldId, draftId, revision) {
+      const parentResult = await assertNoError(
+        await supabase
+          .from("story_drafts")
+          .select("id,world_id,session_id,source_transcript_ids,related_canon_ids")
+          .eq("world_id", worldId)
+          .eq("id", draftId)
+          .single(),
+      );
+      const parent = parentResult.data;
+      if (!parent) {
+        throw new Error("수정할 초안을 찾을 수 없습니다.");
+      }
+
+      const createdAt = revision.createdAt ?? new Date().toISOString();
+      const created = {
+        id: revision.id,
+        worldId,
+        sessionId: parent.session_id,
+        title: revision.title,
+        body: revision.body,
+        status: "proposed",
+        sourceTranscriptIds: [...(parent.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(parent.related_canon_ids ?? [])],
+        parentDraftId: parent.id,
+        createdAt,
+      };
+      await this.insertStoryDraft(created);
+      return created;
+    },
+
+    async acceptStoryDraft(worldId, draftId, acceptedAt = new Date().toISOString()) {
+      const draftResult = await assertNoError(
+        await supabase
+          .from("story_drafts")
+          .select("id,world_id,title,body,status,source_transcript_ids,related_canon_ids")
+          .eq("world_id", worldId)
+          .eq("id", draftId)
+          .single(),
+      );
+      const draft = draftResult.data;
+      if (!draft) {
+        throw new Error("채택할 초안을 찾을 수 없습니다.");
+      }
+      if (!new Set(["proposed", "revising"]).has(draft.status)) {
+        throw new Error(draft.status === "accepted" ? "이미 채택된 초안입니다." : "채택할 수 없는 초안입니다.");
+      }
+
+      const latestResult = await assertNoError(
+        await supabase
+          .from("story_scenes")
+          .select("sequence")
+          .eq("world_id", worldId)
+          .order("sequence", { ascending: false }),
+      );
+      const order = (latestResult.data ?? []).reduce(
+        (highest, scene) => Math.max(highest, Number(scene.sequence) || 0),
+        0,
+      ) + 1;
+      const scene = {
+        id: `scene-${draft.id}`,
+        worldId,
+        draftId: draft.id,
+        title: draft.title,
+        content: draft.body,
+        order,
+        acceptedAt,
+        sourceTranscriptIds: [...(draft.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(draft.related_canon_ids ?? [])],
+      };
+
+      await assertNoError(
+        await supabase.from("story_scenes").insert({
+          id: scene.id,
+          world_id: scene.worldId,
+          draft_id: scene.draftId,
+          title: scene.title,
+          content: scene.content,
+          sequence: scene.order,
+          status: "accepted",
+          accepted_at: scene.acceptedAt,
+          source_transcript_ids: scene.sourceTranscriptIds,
+          related_canon_ids: scene.relatedCanonIds,
+        }),
+      );
+      await assertNoError(
+        await supabase
+          .from("story_drafts")
+          .update({ status: "accepted" })
+          .eq("world_id", worldId)
+          .eq("id", draftId),
+      );
+      return scene;
+    },
+
+    async listWorldManuscript(worldId) {
+      const result = await assertNoError(
+        await supabase
+          .from("story_scenes")
+          .select("id,world_id,draft_id,title,content,sequence,status,accepted_at,source_transcript_ids,related_canon_ids")
+          .eq("world_id", worldId)
+          .eq("status", "accepted")
+          .order("sequence", { ascending: true }),
+      );
+      return (result.data ?? []).map((scene) => ({
+        id: scene.id,
+        worldId: scene.world_id,
+        draftId: scene.draft_id,
+        title: scene.title,
+        content: scene.content,
+        order: scene.sequence,
+        acceptedAt: scene.accepted_at,
+        sourceTranscriptIds: [...(scene.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(scene.related_canon_ids ?? [])],
+      }));
+    },
+
     async deleteWorld(worldId) {
       await assertNoError(await supabase.from("worlds").delete().eq("id", worldId));
       return { ok: true, worldId };

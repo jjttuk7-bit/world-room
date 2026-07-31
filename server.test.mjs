@@ -149,3 +149,127 @@ describe("World Room 세션 저장", () => {
     await expect(deleteWorldRecord("")).rejects.toThrow("삭제할 세계 ID가 없습니다.");
   });
 });
+
+describe("비공개 이야기 작업실 저장소", () => {
+  const draft = {
+    id: "draft-1",
+    worldId: "world-1",
+    sessionId: "session-1",
+    title: "금지된 지도",
+    body: "잠수사는 금지된 지도를 펼쳤다.",
+    status: "proposed",
+    sourceTranscriptIds: ["line-1", "line-2"],
+    relatedCanonIds: ["canon-1"],
+    createdAt: "2026-07-31T00:00:00.000Z",
+  };
+
+  function createQuery(result = { data: [], error: null }) {
+    const query = {
+      insert: vi.fn(() => query),
+      update: vi.fn(() => query),
+      select: vi.fn(() => query),
+      eq: vi.fn(() => query),
+      order: vi.fn(() => query),
+      single: vi.fn(() => query),
+      then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
+    };
+    return query;
+  }
+
+  it("새 초안을 해당 세계와 출처 참조에 연결해 저장한다", async () => {
+    const query = createQuery();
+    const supabase = { from: vi.fn(() => query) };
+    const repository = createSupabaseRepository(supabase);
+
+    await repository.insertStoryDraft(draft);
+
+    expect(supabase.from).toHaveBeenCalledWith("story_drafts");
+    expect(query.insert).toHaveBeenCalledWith({
+      id: "draft-1",
+      world_id: "world-1",
+      session_id: "session-1",
+      title: "금지된 지도",
+      body: "잠수사는 금지된 지도를 펼쳤다.",
+      status: "proposed",
+      source_transcript_ids: ["line-1", "line-2"],
+      related_canon_ids: ["canon-1"],
+      parent_draft_id: null,
+      created_at: "2026-07-31T00:00:00.000Z",
+    });
+  });
+
+  it("수정은 같은 세계의 부모 초안을 조회해 출처를 보존한 새 버전을 만든다", async () => {
+    const parentQuery = createQuery({
+      data: {
+        id: "draft-1",
+        world_id: "world-1",
+        session_id: "session-1",
+        source_transcript_ids: ["line-1", "line-2"],
+        related_canon_ids: ["canon-1"],
+      },
+      error: null,
+    });
+    const revisionQuery = createQuery();
+    const supabase = { from: vi.fn().mockReturnValueOnce(parentQuery).mockReturnValueOnce(revisionQuery) };
+    const repository = createSupabaseRepository(supabase);
+
+    await repository.reviseStoryDraft("world-1", "draft-1", {
+      id: "draft-2",
+      title: "항구의 지도",
+      body: "항구에서 지도가 펼쳐졌다.",
+      createdAt: "2026-07-31T01:00:00.000Z",
+    });
+
+    expect(parentQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
+    expect(parentQuery.eq).toHaveBeenCalledWith("id", "draft-1");
+    expect(revisionQuery.insert).toHaveBeenCalledWith(expect.objectContaining({
+      id: "draft-2",
+      world_id: "world-1",
+      parent_draft_id: "draft-1",
+      source_transcript_ids: ["line-1", "line-2"],
+      related_canon_ids: ["canon-1"],
+    }));
+  });
+
+  it("채택은 세계별 다음 장면 순서를 만들고 같은 초안을 한 번만 채택한다", async () => {
+    const draftQuery = createQuery({ data: { id: "draft-1", world_id: "world-1", body: draft.body, status: "proposed" }, error: null });
+    const latestSceneQuery = createQuery({ data: [{ sequence: 3 }], error: null });
+    const sceneInsertQuery = createQuery();
+    const draftUpdateQuery = createQuery();
+    const supabase = {
+      from: vi.fn()
+        .mockReturnValueOnce(draftQuery)
+        .mockReturnValueOnce(latestSceneQuery)
+        .mockReturnValueOnce(sceneInsertQuery)
+        .mockReturnValueOnce(draftUpdateQuery),
+    };
+    const repository = createSupabaseRepository(supabase);
+
+    const scene = await repository.acceptStoryDraft("world-1", "draft-1", "2026-07-31T02:00:00.000Z");
+
+    expect(scene).toMatchObject({ worldId: "world-1", draftId: "draft-1", order: 4 });
+    expect(draftQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
+    expect(sceneInsertQuery.insert).toHaveBeenCalledWith(expect.objectContaining({ world_id: "world-1", draft_id: "draft-1", sequence: 4 }));
+    expect(draftUpdateQuery.update).toHaveBeenCalledWith({ status: "accepted" });
+    expect(draftUpdateQuery.eq).toHaveBeenCalledWith("world_id", "world-1");
+  });
+
+  it("원고 조회는 해당 세계의 채택된 장면만 순서대로 반환한다", async () => {
+    const query = createQuery({
+      data: [
+        { id: "scene-1", world_id: "world-1", draft_id: "draft-1", content: "첫 장면", sequence: 1, accepted_at: "2026-07-31T02:00:00.000Z", source_transcript_ids: ["line-1"], related_canon_ids: ["canon-1"] },
+      ],
+      error: null,
+    });
+    const supabase = { from: vi.fn(() => query) };
+    const repository = createSupabaseRepository(supabase);
+
+    await expect(repository.listWorldManuscript("world-1")).resolves.toEqual([
+      expect.objectContaining({ worldId: "world-1", order: 1, sourceTranscriptIds: ["line-1"] }),
+    ]);
+    expect(supabase.from).toHaveBeenCalledWith("story_scenes");
+    expect(query.eq).toHaveBeenCalledWith("world_id", "world-1");
+    expect(query.eq).toHaveBeenCalledWith("status", "accepted");
+    expect(query.order).toHaveBeenCalledWith("sequence", { ascending: true });
+  });
+});
