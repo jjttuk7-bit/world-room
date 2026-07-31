@@ -129,3 +129,29 @@ button:disabled { opacity: .42; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 @media (max-width: 760px) { .studio-header { grid-template-columns: 1fr auto; } .mode-nav { grid-column: 1 / -1; grid-row: 2; justify-self: start; } .conversation-layout { grid-template-columns: 1fr; } .conversation-margin { position: static; } .voice-dock { grid-template-columns: auto 1fr; } .voice-actions { grid-column: 1 / -1; justify-content: space-between; } .bible-columns { grid-template-columns: 1fr; } .bible-columns article { min-height: auto; border-inline-end: 0; border-bottom: 1px solid var(--line); } }
 @media (max-width: 440px) { .studio-shell { padding-inline: 1rem; } .studio-header { gap: .8rem; } .header-actions { gap: 0; } .new-world-button { padding-inline: .6rem; } .mode-nav button { padding-inline: .6rem; } .transcript-sheet { border: 0; padding-inline: 0; } }
+
+.draft-review { margin-top: 2rem; border-top: 1px solid var(--line-strong); padding-top: .9rem; }
+.draft-review-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .6rem; }
+.draft-review-heading h3 { margin: -.15rem 0 0; font-size: 1.05rem; font-weight: 600; }
+.draft-review-heading > span { color: var(--muted); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .7rem; }
+.draft-card { display: grid; gap: .75rem; margin-top: .85rem; border-inline-start: 2px solid var(--amber); background: rgba(227,184,93,.055); padding: .85rem; }
+.draft-card h4 { margin: 0; font-size: 1.04rem; font-weight: 600; }
+.draft-card > p { margin: 0; color: var(--soft-ink); font-size: .9rem; line-height: 1.7; }
+.draft-card .draft-kicker { color: var(--amber); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .66rem; font-weight: 800; letter-spacing: .03em; }
+.draft-card label { display: grid; gap: .35rem; color: var(--muted); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .68rem; font-weight: 800; }
+.draft-card input, .draft-card textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: .2rem; background: rgba(17,17,14,.65); color: var(--ink); padding: .55rem; font-size: .88rem; line-height: 1.55; }
+.draft-card textarea { resize: vertical; }
+.draft-sources { border-top: 1px solid var(--line); padding-top: .65rem; color: var(--muted) !important; font-size: .75rem !important; }
+.draft-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; }
+.draft-actions .text-button { min-height: 2.1rem; padding-inline: .45rem; font-size: .76rem; }
+.draft-actions .primary-button { min-height: 2.15rem; padding: .4rem .65rem; font-size: .78rem; }
+.draft-empty { display: grid; gap: .7rem; margin-top: .75rem; }
+.draft-empty p, .draft-feedback { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.65; }
+.draft-empty .primary-button { justify-self: start; min-height: 2.25rem; font-size: .78rem; }
+.draft-feedback { margin-top: .7rem; color: var(--blue); }
+.draft-feedback.error { color: var(--danger); }
+.manuscript-scenes { display: grid; border-top: 1px solid var(--line-strong); }
+.manuscript-scene { border-bottom: 1px solid var(--line); padding: 1.7rem 0; }
+.manuscript-scene > span, .manuscript-scene small { color: var(--amber); font-family: "Pretendard", "Segoe UI", sans-serif; font-size: .7rem; font-weight: 800; }
+.manuscript-scene h3 { margin: .7rem 0; font-size: 1.55rem; font-weight: 500; }
+.manuscript-scene p { color: var(--soft-ink); line-height: 1.9; white-space: pre-wrap; }

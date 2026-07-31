@@ -27,7 +27,10 @@ export type StoryScene = {
   id: string;
   worldId: string;
   draftId: string;
+  title?: string;
   content: string;
+  sourceTranscriptIds?: readonly string[];
+  relatedCanonIds?: readonly string[];
   order: number;
   acceptedAt: string;
 };

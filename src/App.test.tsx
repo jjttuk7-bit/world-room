@@ -13,6 +13,12 @@ beforeEach(() => {
       if (url.includes("/worlds/recent")) {
         return { ok: true, json: async () => ({ worlds: [{ id: "world-1", title: "안개 도시", summary: "밤마다 골목이 바뀌는 도시.", continuityBrief: "안개 도시와 사라진 지도 제작자를 이어간다.", updatedAt: "2026-05-27T18:33:21.000Z" }] }) };
       }
+      if (String(url).includes("/story/drafts")) {
+        return { ok: true, json: async () => ({ worldId: "world-1", drafts: [] }) };
+      }
+      if (String(url).includes("/story")) {
+        return { ok: true, json: async () => ({ worldId: "world-1", scenes: [] }) };
+      }
       return { ok: true, json: async () => ({}) };
     }),
   );
@@ -119,6 +125,13 @@ describe("World Room 앱", () => {
     expect(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ })).toBeInTheDocument();
   });
 
+  it("대화 근거가 없으면 장면 초안 만들기를 안내한다", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "보관함" }));
+    fireEvent.click(await screen.findByRole("button", { name: /안개 도시 이어 말하기/ }));
+    expect(screen.getByRole("button", { name: "장면 초안 만들기" })).toBeDisabled();
+    expect(screen.getByText("장면 초안은 대화가 충분히 쌓인 뒤 만들 수 있습니다.")).toBeInTheDocument();
+  });
   it("저장된 세계를 삭제할 수 있다", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "보관함" }));
