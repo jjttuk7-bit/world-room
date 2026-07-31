@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, generateStoryDraft, getWorldStory, saveSessionRecord, validateStoryDraftRequest } from "./server.mjs";
+import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, generateStoryDraft, getWorldStory, holdSavedStoryDraft, listWorldDrafts, saveSessionRecord, validateStoryDraftRequest } from "./server.mjs";
 
 describe("World Room 세션 저장", () => {
   it("transcript와 sparks를 Supabase 저장 record로 정리한다", async () => {
@@ -182,7 +182,7 @@ describe("비공개 이야기 작업실 저장소", () => {
     const supabase = { from: vi.fn(() => query) };
     const repository = createSupabaseRepository(supabase);
 
-    await repository.insertStoryDraft(draft);
+    await repository.insertStoryDraft(draft, { worldChecked: true });
 
     expect(supabase.from).toHaveBeenCalledWith("story_drafts");
     expect(query.insert).toHaveBeenCalledWith({
@@ -218,7 +218,7 @@ describe("비공개 이야기 작업실 저장소", () => {
       title: "항구의 지도",
       body: "항구에서 지도가 펼쳐졌다.",
       createdAt: "2026-07-31T01:00:00.000Z",
-    });
+    }, { worldChecked: true });
 
     expect(created).toMatchObject({ id: "draft-2", worldId: "world-1", parentDraftId: "draft-1", sourceTranscriptIds: ["line-1", "line-2"] });
     expect(supabase.rpc).toHaveBeenCalledWith("revise_story_draft", {
@@ -231,7 +231,7 @@ describe("비공개 이야기 작업실 저장소", () => {
     const supabase = { rpc: vi.fn(async () => ({ data: null, error: { message: "이미 진행 중인 수정본이 있습니다." } })) };
     const repository = createSupabaseRepository(supabase);
 
-    await expect(repository.reviseStoryDraft("world-1", "draft-1", { id: "draft-2", title: "수정", body: "본문" }))
+    await expect(repository.reviseStoryDraft("world-1", "draft-1", { id: "draft-2", title: "수정", body: "본문" }, { worldChecked: true }))
       .rejects.toThrow("이미 진행 중인 수정본이 있습니다.");
   });
 
@@ -239,7 +239,7 @@ describe("비공개 이야기 작업실 저장소", () => {
     const supabase = { rpc: vi.fn(async () => ({ data: [{ id: "scene-draft-1", world_id: "world-1", draft_id: "draft-1", title: draft.title, content: draft.body, sequence: 4, accepted_at: "2026-07-31T02:00:00.000Z", source_transcript_ids: ["line-1", "line-2"], related_canon_ids: ["canon-1"] }], error: null })) };
     const repository = createSupabaseRepository(supabase);
 
-    const scene = await repository.acceptStoryDraft("world-1", "draft-1", "2026-07-31T02:00:00.000Z");
+    const scene = await repository.acceptStoryDraft("world-1", "draft-1", "2026-07-31T02:00:00.000Z", { worldChecked: true });
 
     expect(scene).toMatchObject({ worldId: "world-1", draftId: "draft-1", order: 4 });
     expect(supabase.rpc).toHaveBeenCalledWith("accept_story_draft", {
@@ -251,14 +251,14 @@ describe("비공개 이야기 작업실 저장소", () => {
     const supabase = { rpc: vi.fn(async () => ({ data: null, error: { message: "채택할 수 없는 초안입니다." } })) };
     const repository = createSupabaseRepository(supabase);
 
-    await expect(repository.acceptStoryDraft("world-1", "draft-1")).rejects.toThrow("채택할 수 없는 초안입니다.");
+    await expect(repository.acceptStoryDraft("world-1", "draft-1", undefined, { worldChecked: true })).rejects.toThrow("채택할 수 없는 초안입니다.");
   });
 
   it("채택 RPC가 충돌 또는 실패하면 오류를 그대로 전달한다", async () => {
     const supabase = { rpc: vi.fn(async () => ({ data: null, error: { message: "duplicate key value violates unique constraint" } })) };
     const repository = createSupabaseRepository(supabase);
 
-    await expect(repository.acceptStoryDraft("world-1", "draft-1")).rejects.toThrow("duplicate key");
+    await expect(repository.acceptStoryDraft("world-1", "draft-1", undefined, { worldChecked: true })).rejects.toThrow("duplicate key");
   });
   it("원고 조회는 해당 세계의 채택된 장면만 순서대로 반환한다", async () => {
     const query = createQuery({
@@ -270,7 +270,7 @@ describe("비공개 이야기 작업실 저장소", () => {
     const supabase = { from: vi.fn(() => query) };
     const repository = createSupabaseRepository(supabase);
 
-    await expect(repository.listWorldManuscript("world-1")).resolves.toEqual([
+    await expect(repository.listWorldManuscript("world-1", { worldChecked: true })).resolves.toEqual([
       expect.objectContaining({ worldId: "world-1", order: 1, sourceTranscriptIds: ["line-1"] }),
     ]);
     expect(supabase.from).toHaveBeenCalledWith("story_scenes");
@@ -329,8 +329,54 @@ describe("장면 초안 생성", () => {
     await expect(generateStoryDraft(request, { apiKey: "test-key", fetchImpl })).rejects.toThrow("초안이 제공되지 않은 대화 근거를 참조했습니다.");
   });
   it("세계 원고 조회는 소유자 범위 저장소 결과를 반환한다", async () => {
-    const repository = { listWorldManuscript: vi.fn(async (worldId) => [{ id: "scene-1", worldId, order: 1 }]) };
+    const repository = { assertWorldOwned: vi.fn(async () => ({ id: "world-1" })), listWorldManuscript: vi.fn(async (worldId) => [{ id: "scene-1", worldId, order: 1 }]) };
     await expect(getWorldStory("world-1", { repository })).resolves.toEqual({ worldId: "world-1", scenes: [{ id: "scene-1", worldId: "world-1", order: 1 }] });
-    expect(repository.listWorldManuscript).toHaveBeenCalledWith("world-1");
+    expect(repository.listWorldManuscript).toHaveBeenCalledWith("world-1", { worldChecked: true });
+  });
+});
+
+describe("이야기 초안 소유 범위와 재개", () => {
+  function query(result = { data: [], error: null }) {
+    const value = {
+      insert: vi.fn(() => value), update: vi.fn(() => value), select: vi.fn(() => value), eq: vi.fn(() => value), order: vi.fn(() => value), limit: vi.fn(() => value),
+      then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
+    };
+    return value;
+  }
+
+  it("초안을 저장하기 전에 해당 세계가 소유자에게 속하는지 확인한다", async () => {
+    const worlds = query({ data: [], error: null });
+    const supabase = { from: vi.fn(() => worlds) };
+    const repository = createSupabaseRepository(supabase);
+    await expect(repository.insertStoryDraft({ id: "draft-1", worldId: "other-world", title: "초안", body: "첫째 문장이다. 둘째 문장이다. 셋째 문장이다." }))
+      .rejects.toMatchObject({ status: 403, code: "WORLD_ACCESS_DENIED" });
+    expect(supabase.from).toHaveBeenCalledWith("worlds");
+    expect(worlds.insert).not.toHaveBeenCalled();
+  });
+
+  it("세계별 초안을 최신순으로 재개하고 소유 초안을 보류한다", async () => {
+    const worlds = query({ data: [{ id: "world-1" }], error: null });
+    const drafts = query({ data: [{ id: "draft-1", world_id: "world-1", session_id: null, title: "지도", body: "본문", status: "proposed", source_transcript_ids: ["line-1"], related_canon_ids: [], parent_draft_id: null, created_at: "2026-07-31T00:00:00.000Z" }], error: null });
+    const held = query({ data: [{ id: "draft-1", world_id: "world-1", status: "held" }], error: null });
+    let storyDraftCalls = 0;
+    const supabase = { from: vi.fn((table) => {
+      if (table === "worlds") return worlds;
+      storyDraftCalls += 1;
+      return storyDraftCalls === 1 ? drafts : held;
+    }) };
+    const repository = createSupabaseRepository(supabase);
+    await expect(repository.listStoryDrafts("world-1")).resolves.toEqual([expect.objectContaining({ id: "draft-1", worldId: "world-1", sourceTranscriptIds: ["line-1"] })]);
+    await expect(repository.holdStoryDraft("world-1", "draft-1")).resolves.toMatchObject({ id: "draft-1", status: "held" });
+    expect(drafts.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(held.update).toHaveBeenCalledWith({ status: "held" });
+    expect(held.eq).toHaveBeenCalledWith("owner_id", "00000000-0000-0000-0000-000000000001");
+  });
+
+  it("서비스 계층은 초안 목록과 보류 전에 세계 소유 범위 저장소를 호출한다", async () => {
+    const repository = { assertWorldOwned: vi.fn(async () => ({ id: "world-1" })), listStoryDrafts: vi.fn(async () => []), holdStoryDraft: vi.fn(async () => ({ id: "draft-1", status: "held" })) };
+    await expect(listWorldDrafts("world-1", { repository })).resolves.toEqual({ worldId: "world-1", drafts: [] });
+    await expect(holdSavedStoryDraft("world-1", "draft-1", { repository })).resolves.toEqual({ id: "draft-1", status: "held" });
+    expect(repository.listStoryDrafts).toHaveBeenCalledWith("world-1", { worldChecked: true });
+    expect(repository.holdStoryDraft).toHaveBeenCalledWith("world-1", "draft-1", { worldChecked: true });
   });
 });

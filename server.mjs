@@ -49,7 +49,7 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN ?? "http://localhost:5173",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   });
   res.end(JSON.stringify(body));
@@ -68,6 +68,22 @@ function createDefaultRepository() {
   });
 
   return createSupabaseRepository(supabase);
+}
+
+export class ApiError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function errorPayload(error, fallback = "요청을 처리하지 못했습니다.") {
+  const status = error instanceof ApiError ? error.status : 500;
+  const code = error instanceof ApiError ? error.code : "UPSTREAM_FAILURE";
+  const message = error instanceof Error ? error.message : fallback;
+  return { status, body: { error: { code, message } } };
 }
 
 function safetyIdentifier() {
@@ -313,7 +329,7 @@ function sentenceCount(body) {
   return String(body).trim().split(/[.!?…。]+(?:\s|$)/).filter(Boolean).length;
 }
 
-export function validateStoryDraftRequest(payload) {
+function validateStoryDraftRequestUnsafe(payload) {
   const worldId = String(payload?.worldId ?? "").trim();
   if (!worldId) throw new Error("세계 ID가 필요합니다.");
   const sessionId = String(payload?.sessionId ?? "").trim() || null;
@@ -341,6 +357,14 @@ export function validateStoryDraftRequest(payload) {
   return { worldId, sessionId, world: { title: worldTitle, continuityBrief }, transcript, canon };
 }
 
+export function validateStoryDraftRequest(payload) {
+  try {
+    return validateStoryDraftRequestUnsafe(payload);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "VALIDATION_ERROR", error instanceof Error ? error.message : "장면 초안 요청이 올바르지 않습니다.");
+  }
+}
 export async function generateStoryDraft(payload, options = {}) {
   const context = validateStoryDraftRequest(payload);
   const secret = options.apiKey ?? apiKey;
@@ -388,17 +412,39 @@ export async function generateStoryDraft(payload, options = {}) {
 }
 
 export async function createGeneratedStoryDraft(payload, options = {}) {
-  const draft = await generateStoryDraft(payload, options);
+  const context = validateStoryDraftRequest(payload);
   const repository = options.repository ?? createDefaultRepository();
   if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
-  return repository.insertStoryDraft(draft);
+  await repository.assertWorldOwned(context.worldId);
+  const draft = await generateStoryDraft(context, options);
+  return repository.insertStoryDraft(draft, { worldChecked: true });
 }
 export async function getWorldStory(worldId, options = {}) {
   const cleanWorldId = String(worldId ?? "").trim();
-  if (!cleanWorldId) throw new Error("세계 ID가 필요합니다.");
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
   const repository = options.repository ?? createDefaultRepository();
   if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
-  return { worldId: cleanWorldId, scenes: await repository.listWorldManuscript(cleanWorldId) };
+  await repository.assertWorldOwned(cleanWorldId);
+  return { worldId: cleanWorldId, scenes: await repository.listWorldManuscript(cleanWorldId, { worldChecked: true }) };
+}
+
+export async function listWorldDrafts(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  return { worldId: cleanWorldId, drafts: await repository.listStoryDrafts(cleanWorldId, { worldChecked: true }) };
+}
+
+export async function holdSavedStoryDraft(worldId, draftId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  const cleanDraftId = String(draftId ?? "").trim();
+  if (!cleanWorldId || !cleanDraftId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID와 초안 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  return repository.holdStoryDraft(cleanWorldId, cleanDraftId, { worldChecked: true });
 }
 
 export async function reviseSavedStoryDraft(worldId, draftId, payload, options = {}) {
@@ -506,9 +552,30 @@ export function handleOptions(req, res) {
   return true;
 }
 
+export function sendApiError(res, error, fallback) {
+  const { status, body } = errorPayload(error, fallback);
+  sendJson(res, status, body);
+}
+
 export { sendJson };
 
 export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceOwnerId } = {}) {
+  async function assertWorldOwned(worldId) {
+    const result = await assertNoError(
+      await supabase.from("worlds").select("id").eq("id", worldId).eq("owner_id", ownerId).limit(1),
+    );
+    const world = Array.isArray(result.data) ? result.data[0] : result.data;
+    if (!world?.id) throw new ApiError(403, "WORLD_ACCESS_DENIED", "이 세계에 접근할 권한이 없습니다.");
+    return world;
+  }
+
+  function toStoryDraft(row) {
+    return {
+      id: row.id, worldId: row.world_id, sessionId: row.session_id, title: row.title, body: row.body, status: row.status,
+      sourceTranscriptIds: [...(row.source_transcript_ids ?? [])], relatedCanonIds: [...(row.related_canon_ids ?? [])],
+      parentDraftId: row.parent_draft_id, createdAt: row.created_at,
+    };
+  }
   async function assertNoError(result) {
     if (result?.error) {
       throw new Error(result.error.message ?? "Supabase 저장에 실패했습니다.");
@@ -609,7 +676,10 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
       }));
     },
 
-    async insertStoryDraft(draft) {
+    assertWorldOwned,
+
+    async insertStoryDraft(draft, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(draft.worldId);
       await assertNoError(
         await supabase.from("story_drafts").insert({
           id: draft.id,
@@ -628,7 +698,8 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
       return { ...draft };
     },
 
-    async reviseStoryDraft(worldId, draftId, revision) {
+    async reviseStoryDraft(worldId, draftId, revision, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
       const result = await assertNoError(
         await supabase.rpc("revise_story_draft", {
           p_world_id: worldId,
@@ -658,7 +729,8 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
       };
     },
 
-    async acceptStoryDraft(worldId, draftId, acceptedAt = new Date().toISOString()) {
+    async acceptStoryDraft(worldId, draftId, acceptedAt = new Date().toISOString(), { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
       const result = await assertNoError(
         await supabase.rpc("accept_story_draft", {
           p_world_id: worldId,
@@ -684,7 +756,8 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
         relatedCanonIds: [...(scene.related_canon_ids ?? [])],
       };
     },
-    async listWorldManuscript(worldId) {
+    async listWorldManuscript(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
       const result = await assertNoError(
         await supabase
           .from("story_scenes")
@@ -707,6 +780,28 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
       }));
     },
 
+    async listStoryDrafts(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase
+          .from("story_drafts")
+          .select("id,world_id,session_id,title,body,status,source_transcript_ids,related_canon_ids,parent_draft_id,created_at")
+          .eq("world_id", worldId)
+          .eq("owner_id", ownerId)
+          .order("created_at", { ascending: false }),
+      );
+      return (result.data ?? []).map(toStoryDraft);
+    },
+
+    async holdStoryDraft(worldId, draftId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.from("story_drafts").update({ status: "held" }).eq("id", draftId).eq("world_id", worldId).eq("owner_id", ownerId).eq("status", "proposed").select("id,world_id,status"),
+      );
+      const held = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!held?.id) throw new ApiError(400, "DRAFT_NOT_HOLDABLE", "보류할 수 없는 초안입니다.");
+      return { id: held.id, worldId: held.world_id, status: held.status };
+    },
     async deleteWorld(worldId) {
       await assertNoError(await supabase.from("worlds").delete().eq("id", worldId).eq("owner_id", ownerId));
       return { ok: true, worldId };

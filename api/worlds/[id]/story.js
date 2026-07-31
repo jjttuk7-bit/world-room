@@ -1,4 +1,4 @@
-import { createGeneratedStoryDraft, getWorldStory, handleOptions, readRequestJson, sendJson } from "../../../server.mjs";
+import { createGeneratedStoryDraft, getWorldStory, handleOptions, readRequestJson, sendApiError, sendJson } from "../../../server.mjs";
 
 function worldIdFor(req) {
   const value = Array.isArray(req.query?.id) ? req.query.id[0] : req.query?.id;
@@ -19,8 +19,8 @@ export default async function handler(req, res) {
       sendJson(res, 201, await createGeneratedStoryDraft({ ...payload, worldId }));
       return;
     }
-    sendJson(res, 405, { error: "허용되지 않는 메서드입니다." });
+    sendJson(res, 405, { error: { code: "METHOD_NOT_ALLOWED", message: "허용되지 않는 메서드입니다." } });
   } catch (error) {
-    sendJson(res, 400, { error: error instanceof Error ? error.message : "이야기 작업을 처리하지 못했습니다." });
+    sendApiError(res, error, "이야기 작업을 처리하지 못했습니다.");
   }
 }
