@@ -333,3 +333,92 @@ grant execute on function public.accept_story_draft(text, text, text, uuid, time
   to service_role;
 grant execute on function public.revise_story_draft(text, text, text, text, text, uuid, timestamptz)
   to service_role;
+-- Creative briefs are immutable world-local planning history. Only the most
+-- recently approved brief remains active; activation is serialized per world.
+create table if not exists public.creative_briefs (
+  id text primary key,
+  world_id text not null references public.worlds(id) on delete cascade,
+  owner_id uuid not null,
+  intent text not null,
+  conflict text not null default '',
+  tone text not null default '',
+  required_elements jsonb not null default '[]'::jsonb,
+  session_goal text not null default '',
+  status text not null default 'active' check (status in ('active', 'historical')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists creative_briefs_world_id_created_at_idx
+  on public.creative_briefs(world_id, created_at desc);
+create unique index if not exists creative_briefs_one_active_per_world_idx
+  on public.creative_briefs(world_id)
+  where status = 'active';
+
+create or replace function public.activate_creative_brief(
+  p_world_id text,
+  p_brief_id text,
+  p_owner_id uuid,
+  p_intent text,
+  p_conflict text,
+  p_tone text,
+  p_required_elements jsonb,
+  p_session_goal text
+)
+returns table (
+  id text,
+  world_id text,
+  intent text,
+  conflict text,
+  tone text,
+  required_elements jsonb,
+  session_goal text,
+  status text,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_owner_id uuid;
+begin
+  perform pg_advisory_xact_lock(hashtextextended(p_world_id, 0));
+
+  select owner_id into v_owner_id
+  from public.worlds
+  where id = p_world_id
+  for update;
+
+  if not found or v_owner_id <> p_owner_id then
+    raise exception '해당 세계에 접근할 수 없습니다.';
+  end if;
+
+  update public.creative_briefs
+  set status = 'historical'
+  where world_id = p_world_id
+    and owner_id = v_owner_id
+    and status = 'active';
+
+  insert into public.creative_briefs (
+    id, world_id, owner_id, intent, conflict, tone, required_elements,
+    session_goal, status
+  ) values (
+    p_brief_id, p_world_id, v_owner_id, p_intent, p_conflict, p_tone,
+    coalesce(p_required_elements, '[]'::jsonb), p_session_goal, 'active'
+  );
+
+  return query
+  select b.id, b.world_id, b.intent, b.conflict, b.tone,
+         b.required_elements, b.session_goal, b.status, b.created_at
+  from public.creative_briefs b
+  where b.id = p_brief_id and b.world_id = p_world_id;
+end;
+$$;
+
+alter table public.creative_briefs enable row level security;
+revoke all on table public.creative_briefs from public, anon, authenticated;
+grant all on table public.creative_briefs to service_role;
+revoke all on function public.activate_creative_brief(text, text, uuid, text, text, text, jsonb, text)
+  from public, anon, authenticated;
+grant execute on function public.activate_creative_brief(text, text, uuid, text, text, text, jsonb, text)
+  to service_role;

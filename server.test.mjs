@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, generateStoryDraft, getWorldStory, holdSavedStoryDraft, listWorldDrafts, saveSessionRecord, validateStoryDraftRequest } from "./server.mjs";
+import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, generateStoryDraft, getWorldStory, holdSavedStoryDraft, listWorldDrafts, saveCreativeBrief, saveSessionRecord, validateStoryDraftRequest } from "./server.mjs";
 
 describe("World Room 세션 저장", () => {
   it("transcript와 sparks를 Supabase 저장 record로 정리한다", async () => {
@@ -281,6 +281,58 @@ describe("비공개 이야기 작업실 저장소", () => {
   });
 });
 
+describe("승인 창작 브리프 저장", () => {
+  it("세계 소유를 확인한 뒤 새 브리프를 활성화 저장소에 전달한다", async () => {
+    const repository = {
+      assertWorldOwned: vi.fn(async () => ({ id: "world-1" })),
+      saveCreativeBrief: vi.fn(async () => ({ id: "brief-1", worldId: "world-1", status: "active" })),
+    };
+
+    await expect(saveCreativeBrief("world-1", {
+      approved: true,
+      intent: "잠수사가 잃어버린 지도를 찾는 이야기",
+      conflict: "도시는 지도를 금지한다.",
+      tone: "고요하고 불길하게",
+      requiredElements: ["역류하는 비"],
+      sessionGoal: "첫 장면의 선택을 찾는다.",
+    }, { repository, idFactory: () => "brief-1" })).resolves.toMatchObject({ id: "brief-1", worldId: "world-1", status: "active" });
+
+    expect(repository.assertWorldOwned).toHaveBeenCalledWith("world-1");
+    expect(repository.saveCreativeBrief).toHaveBeenCalledWith("world-1", expect.objectContaining({
+      id: "brief-1",
+      status: "active",
+    }), { worldChecked: true });
+  });
+
+  it("저장소는 승인된 브리프를 activate_creative_brief RPC로 원자적으로 활성화한다", async () => {
+    const query = {
+      select: vi.fn(() => query),
+      eq: vi.fn(() => query),
+      limit: vi.fn(() => query),
+      then: (resolve, reject) => Promise.resolve({ data: [{ id: "world-1" }], error: null }).then(resolve, reject),
+    };
+    const supabase = {
+      from: vi.fn(() => query),
+      rpc: vi.fn(async () => ({ data: [{ id: "brief-1", world_id: "world-1", intent: "의도", conflict: "갈등", tone: "톤", required_elements: ["요소"], session_goal: "목표", status: "active", created_at: "2026-08-01T00:00:00.000Z" }], error: null })),
+    };
+    const repository = createSupabaseRepository(supabase);
+
+    await repository.saveCreativeBrief("world-1", {
+      id: "brief-1", intent: "의도", conflict: "갈등", tone: "톤", requiredElements: ["요소"], sessionGoal: "목표",
+    });
+
+    expect(supabase.rpc).toHaveBeenCalledWith("activate_creative_brief", {
+      p_world_id: "world-1",
+      p_brief_id: "brief-1",
+      p_owner_id: "00000000-0000-0000-0000-000000000001",
+      p_intent: "의도",
+      p_conflict: "갈등",
+      p_tone: "톤",
+      p_required_elements: ["요소"],
+      p_session_goal: "목표",
+    });
+  });
+});
 describe("비공개 이야기 작업실 스키마", () => {
   it("수정과 채택 RPC를 서비스 역할 전용의 트랜잭션 함수로 제한한다", () => {
     const schema = readFileSync("supabase/schema.sql", "utf8");

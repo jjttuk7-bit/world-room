@@ -489,6 +489,20 @@ export async function createGeneratedStoryDraft(payload, options = {}) {
   const draft = await generateStoryDraft(context, options);
   return repository.insertStoryDraft(draft, { worldChecked: true });
 }
+export async function saveCreativeBrief(worldId, brief, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  if (!brief?.approved) throw new ApiError(400, "BRIEF_NOT_APPROVED", "승인된 창작 브리프만 저장할 수 있습니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  const approvedBrief = validateCreativeBriefRequest(brief);
+  return repository.saveCreativeBrief(cleanWorldId, {
+    id: options.idFactory?.() ?? `brief-${randomUUID()}`,
+    ...approvedBrief,
+    status: "active",
+  }, { worldChecked: true });
+}
 export async function getWorldStory(worldId, options = {}) {
   const cleanWorldId = String(worldId ?? "").trim();
   if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
@@ -752,6 +766,35 @@ export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceO
 
     assertWorldOwned,
 
+    async saveCreativeBrief(worldId, brief, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.rpc("activate_creative_brief", {
+          p_world_id: worldId,
+          p_brief_id: brief.id,
+          p_owner_id: ownerId,
+          p_intent: brief.intent,
+          p_conflict: brief.conflict,
+          p_tone: brief.tone,
+          p_required_elements: [...(brief.requiredElements ?? [])],
+          p_session_goal: brief.sessionGoal,
+        }),
+      );
+      const activated = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!activated?.id) throw new Error("활성화된 창작 브리프를 찾을 수 없습니다.");
+      return {
+        id: activated.id,
+        worldId: activated.world_id,
+        intent: activated.intent,
+        conflict: activated.conflict,
+        tone: activated.tone,
+        requiredElements: [...(activated.required_elements ?? [])],
+        sessionGoal: activated.session_goal,
+        status: activated.status,
+        createdAt: activated.created_at,
+        approved: activated.status === "active",
+      };
+    },
     async insertStoryDraft(draft, { worldChecked = false } = {}) {
       if (!worldChecked) await assertWorldOwned(draft.worldId);
       await assertNoError(
