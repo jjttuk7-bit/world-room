@@ -12,7 +12,10 @@ export type StoryDraftRequest = {
 export type StoryDraft = {
   id: string;
   worldId: string;
-  content: string;
+  sourceTranscriptIds: readonly string[];
+  relatedCanonIds: readonly string[];
+  title: string;
+  body: string;
   status: StoryDraftStatus;
   createdAt: string;
   parentDraftId?: string;
@@ -29,12 +32,20 @@ export type StoryScene = {
 
 export type StoryRevisionRequest = {
   id: string;
-  content: string;
+  title: string;
+  body: string;
   createdAt: string;
 };
 
+function preserveSources(draft: StoryDraft) {
+  return {
+    sourceTranscriptIds: [...draft.sourceTranscriptIds],
+    relatedCanonIds: [...draft.relatedCanonIds],
+  };
+}
+
 export function holdDraft(draft: StoryDraft): StoryDraft {
-  return { ...draft, status: "held" };
+  return { ...draft, ...preserveSources(draft), status: "held" };
 }
 
 export function acceptDraft(
@@ -52,12 +63,12 @@ export function acceptDraft(
       .reduce((highestOrder, scene) => Math.max(highestOrder, scene.order), 0) + 1;
 
   return {
-    draft: { ...draft, status: "accepted" },
+    draft: { ...draft, ...preserveSources(draft), status: "accepted" },
     scene: {
       id: `scene-${draft.id}`,
       worldId: draft.worldId,
       draftId: draft.id,
-      content: draft.content,
+      content: draft.body,
       order,
       acceptedAt,
     },
@@ -68,7 +79,9 @@ export function createRevision(draft: StoryDraft, request: StoryRevisionRequest)
   return {
     id: request.id,
     worldId: draft.worldId,
-    content: request.content,
+    ...preserveSources(draft),
+    title: request.title,
+    body: request.body,
     status: "proposed",
     createdAt: request.createdAt,
     parentDraftId: draft.id,

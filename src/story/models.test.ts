@@ -11,7 +11,10 @@ import {
 const proposedDraft: StoryDraft = {
   id: "draft-1",
   worldId: "world-1",
-  content: "비가 멈추지 않는 해저 도시에서 잠수사가 지도를 발견했다.",
+  sourceTranscriptIds: ["transcript-1", "transcript-2"],
+  relatedCanonIds: ["canon-city", "canon-diver"],
+  title: "금지된 지도",
+  body: "비가 멈추지 않는 해저 도시에서 잠수사가 지도를 발견했다.",
   status: "proposed",
   createdAt: "2026-07-31T00:00:00.000Z",
 };
@@ -22,14 +25,19 @@ describe("이야기 초안 상태", () => {
     expect(new Set(storyDraftStatuses).size).toBe(storyDraftStatuses.length);
   });
 
-  it("제안된 초안을 보류 상태로 바꾸되 원본은 유지한다", () => {
+  it("제안된 초안을 보류 상태로 바꾸되 출처와 원본은 유지한다", () => {
     const held = holdDraft(proposedDraft);
 
-    expect(held).toMatchObject({ id: "draft-1", status: "held" });
+    expect(held).toMatchObject({
+      id: "draft-1",
+      status: "held",
+      sourceTranscriptIds: ["transcript-1", "transcript-2"],
+      relatedCanonIds: ["canon-city", "canon-diver"],
+    });
     expect(proposedDraft.status).toBe("proposed");
   });
 
-  it("제안된 초안을 채택하면 다음 순서의 정식 장면을 만든다", () => {
+  it("제안된 초안을 채택하면 다음 순서의 정식 장면을 만들고 출처를 유지한다", () => {
     const scenes: StoryScene[] = [
       {
         id: "scene-2",
@@ -51,12 +59,16 @@ describe("이야기 초안 상태", () => {
 
     const accepted = acceptDraft(proposedDraft, scenes, "2026-07-31T01:00:00.000Z");
 
-    expect(accepted.draft.status).toBe("accepted");
+    expect(accepted.draft).toMatchObject({
+      status: "accepted",
+      sourceTranscriptIds: ["transcript-1", "transcript-2"],
+      relatedCanonIds: ["canon-city", "canon-diver"],
+    });
     expect(accepted.scene).toMatchObject({
       id: "scene-draft-1",
       worldId: "world-1",
       draftId: "draft-1",
-      content: proposedDraft.content,
+      content: proposedDraft.body,
       order: 3,
       acceptedAt: "2026-07-31T01:00:00.000Z",
     });
@@ -103,7 +115,7 @@ describe("이야기 초안 상태", () => {
         id: "scene-draft-1",
         worldId: "world-1",
         draftId: "draft-1",
-        content: proposedDraft.content,
+        content: proposedDraft.body,
         order: 1,
         acceptedAt: "2026-07-31T01:00:00.000Z",
       },
@@ -114,17 +126,21 @@ describe("이야기 초안 상태", () => {
     );
   });
 
-  it("수정 요청은 부모 초안에 연결된 별도의 제안 초안을 만든다", () => {
+  it("수정 요청은 부모 초안의 출처를 보존한 별도의 제안 초안을 만든다", () => {
     const revision = createRevision(proposedDraft, {
       id: "draft-2",
-      content: "해저 도시의 항구에서 잠수사가 금지된 지도를 펼쳤다.",
+      title: "항구의 지도",
+      body: "해저 도시의 항구에서 잠수사가 금지된 지도를 펼쳤다.",
       createdAt: "2026-07-31T02:00:00.000Z",
     });
 
     expect(revision).toEqual({
       id: "draft-2",
       worldId: "world-1",
-      content: "해저 도시의 항구에서 잠수사가 금지된 지도를 펼쳤다.",
+      sourceTranscriptIds: ["transcript-1", "transcript-2"],
+      relatedCanonIds: ["canon-city", "canon-diver"],
+      title: "항구의 지도",
+      body: "해저 도시의 항구에서 잠수사가 금지된 지도를 펼쳤다.",
       status: "proposed",
       createdAt: "2026-07-31T02:00:00.000Z",
       parentDraftId: "draft-1",
