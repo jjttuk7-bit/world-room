@@ -2,6 +2,8 @@ export const storyDraftStatuses = ["proposed", "revising", "held", "accepted", "
 
 export type StoryDraftStatus = (typeof storyDraftStatuses)[number];
 
+const actionableStoryDraftStatuses = new Set<StoryDraftStatus>(["proposed", "revising"]);
+
 export type StoryDraftRequest = {
   worldId: string;
   sessionId: string;
@@ -37,6 +39,18 @@ export type StoryRevisionRequest = {
   createdAt: string;
 };
 
+function assertCanTransitionDraft(draft: StoryDraft, nextStatus: "held" | "accepted") {
+  if (actionableStoryDraftStatuses.has(draft.status)) {
+    return;
+  }
+
+  if (nextStatus === "accepted" && draft.status === "accepted") {
+    throw new Error(`Draft ${draft.id} is already accepted`);
+  }
+
+  throw new Error(`Draft ${draft.id} cannot be ${nextStatus} from status ${draft.status}`);
+}
+
 function preserveSources(draft: StoryDraft) {
   return {
     sourceTranscriptIds: [...draft.sourceTranscriptIds],
@@ -45,6 +59,7 @@ function preserveSources(draft: StoryDraft) {
 }
 
 export function holdDraft(draft: StoryDraft): StoryDraft {
+  assertCanTransitionDraft(draft, "held");
   return { ...draft, ...preserveSources(draft), status: "held" };
 }
 
@@ -53,7 +68,9 @@ export function acceptDraft(
   acceptedScenes: StoryScene[],
   acceptedAt: string,
 ): { draft: StoryDraft; scene: StoryScene } {
-  if (draft.status === "accepted" || acceptedScenes.some((scene) => scene.draftId === draft.id)) {
+  assertCanTransitionDraft(draft, "accepted");
+
+  if (acceptedScenes.some((scene) => scene.draftId === draft.id)) {
     throw new Error(`Draft ${draft.id} is already accepted`);
   }
 

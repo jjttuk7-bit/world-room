@@ -169,4 +169,24 @@ describe("이야기 초안 상태", () => {
     expect(proposedDraft.sourceTranscriptIds).toEqual(["transcript-1", "transcript-2"]);
     expect(proposedDraft.relatedCanonIds).toEqual(["canon-city", "canon-diver"]);
   });
+  it("보류는 제안 또는 수정 중인 초안에서만 허용한다", () => {
+    expect(holdDraft({ ...proposedDraft, status: "revising" }).status).toBe("held");
+
+    for (const status of ["held", "accepted", "superseded"] as const) {
+      expect(() => holdDraft({ ...proposedDraft, status })).toThrow("cannot be held");
+    }
+  });
+
+  it("채택은 제안 또는 수정 중인 초안에서만 허용한다", () => {
+    expect(
+      acceptDraft({ ...proposedDraft, status: "revising" }, [], "2026-07-31T01:00:00.000Z").draft
+        .status,
+    ).toBe("accepted");
+
+    for (const status of ["held", "accepted", "superseded"] as const) {
+      expect(() => acceptDraft({ ...proposedDraft, status }, [], "2026-07-31T01:00:00.000Z")).toThrow(
+        status === "accepted" ? "already accepted" : "cannot be accepted",
+      );
+    }
+  });
 });
