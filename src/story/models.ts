@@ -1,4 +1,4 @@
-export type StoryDraftStatus = "proposed" | "held" | "accepted";
+export type StoryDraftStatus = "proposed" | "revising" | "held" | "accepted" | "superseded";
 
 export type StoryDraftRequest = {
   worldId: string;
@@ -40,7 +40,14 @@ export function acceptDraft(
   acceptedScenes: StoryScene[],
   acceptedAt: string,
 ): { draft: StoryDraft; scene: StoryScene } {
-  const order = acceptedScenes.reduce((highestOrder, scene) => Math.max(highestOrder, scene.order), 0) + 1;
+  if (draft.status === "accepted") {
+    throw new Error(`Draft ${draft.id} is already accepted`);
+  }
+
+  const order =
+    acceptedScenes
+      .filter((scene) => scene.worldId === draft.worldId)
+      .reduce((highestOrder, scene) => Math.max(highestOrder, scene.order), 0) + 1;
 
   return {
     draft: { ...draft, status: "accepted" },

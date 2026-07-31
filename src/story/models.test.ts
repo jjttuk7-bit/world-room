@@ -51,6 +51,39 @@ describe("이야기 초안 상태", () => {
     expect(scenes.map((scene) => scene.order)).toEqual([2, 1]);
   });
 
+  it("다른 세계의 장면은 다음 순서 계산에서 제외한다", () => {
+    const scenes: StoryScene[] = [
+      {
+        id: "scene-current-world",
+        worldId: "world-1",
+        draftId: "draft-0",
+        content: "현재 세계 장면",
+        order: 2,
+        acceptedAt: "2026-07-30T00:00:00.000Z",
+      },
+      {
+        id: "scene-other-world",
+        worldId: "world-2",
+        draftId: "draft-other",
+        content: "다른 세계 장면",
+        order: 99,
+        acceptedAt: "2026-07-30T00:00:00.000Z",
+      },
+    ];
+
+    const accepted = acceptDraft(proposedDraft, scenes, "2026-07-31T01:00:00.000Z");
+
+    expect(accepted.scene.order).toBe(3);
+  });
+
+  it("이미 채택한 초안을 다시 채택하려 하면 오류를 던진다", () => {
+    const acceptedDraft: StoryDraft = { ...proposedDraft, status: "accepted" };
+
+    expect(() => acceptDraft(acceptedDraft, [], "2026-07-31T01:00:00.000Z")).toThrow(
+      "already accepted",
+    );
+  });
+
   it("수정 요청은 부모 초안에 연결된 별도의 제안 초안을 만든다", () => {
     const revision = createRevision(proposedDraft, {
       id: "draft-2",
