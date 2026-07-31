@@ -148,4 +148,25 @@ describe("이야기 초안 상태", () => {
     expect(revision).not.toBe(proposedDraft);
     expect(proposedDraft.parentDraftId).toBeUndefined();
   });
+  it("상태 전환 결과는 부모 초안과 독립된 출처 배열을 가진다", () => {
+    const held = holdDraft(proposedDraft);
+    const revision = createRevision(proposedDraft, {
+      id: "draft-2",
+      title: "항구의 지도",
+      body: "해저 도시의 항구에서 잠수사가 금지된 지도를 펼쳤다.",
+      createdAt: "2026-07-31T02:00:00.000Z",
+    });
+    const accepted = acceptDraft(proposedDraft, [], "2026-07-31T01:00:00.000Z").draft;
+
+    for (const derivedDraft of [held, revision, accepted]) {
+      expect(derivedDraft.sourceTranscriptIds).not.toBe(proposedDraft.sourceTranscriptIds);
+      expect(derivedDraft.relatedCanonIds).not.toBe(proposedDraft.relatedCanonIds);
+    }
+
+    (held.sourceTranscriptIds as string[]).push("transcript-held-only");
+    (held.relatedCanonIds as string[]).push("canon-held-only");
+
+    expect(proposedDraft.sourceTranscriptIds).toEqual(["transcript-1", "transcript-2"]);
+    expect(proposedDraft.relatedCanonIds).toEqual(["canon-city", "canon-diver"]);
+  });
 });
