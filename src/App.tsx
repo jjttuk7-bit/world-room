@@ -4,6 +4,8 @@ import type { RealtimeSignal, TranscriptLine } from "./realtime/events";
 
 type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening" | "speaking" | "recovering" | "ended" | "error";
 
+type StudioMode = "conversation" | "manuscript" | "bible";
+
 const tokenUrl = import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token";
 const sessionSaveUrl = import.meta.env.VITE_SESSION_SAVE_URL ?? "/api/sessions";
 const recentWorldsUrl = import.meta.env.VITE_RECENT_WORLDS_URL ?? "/api/worlds/recent";
@@ -52,6 +54,9 @@ export default function App() {
   const [mood, setMood] = useState(moodOptions[0]);
   const [genre, setGenre] = useState(genreOptions[0]);
   const [companionMode, setCompanionMode] = useState(companionModes[0]);
+  const [activeMode, setActiveMode] = useState<StudioMode>("conversation");
+  const [seedOpen, setSeedOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<RTCDataChannel | null>(null);
@@ -362,168 +367,35 @@ export default function App() {
     setTranscript((current) => appendTranscriptLine(current, signal));
   }
 
+  const modeLabels: Array<{ id: StudioMode; label: string }> = [
+    { id: "conversation", label: "대화" },
+    { id: "manuscript", label: "원고" },
+    { id: "bible", label: "세계 성경" },
+  ];
+
   return (
-    <main className="world-room">
-      <section className="hero-panel">
-        <div className="brand-block">
-          <p className="eyebrow">Realtime voice worldbuilding</p>
-          <h1>World Room</h1>
-          <p>
-            말로 세계를 열고, 동반자가 바로 받아서 설정, 인물, 갈등, 장면 훅을 함께 빚어주는 한국어
-            실시간 오디오 작업실입니다.
-          </p>
-        </div>
-
-        <div className={`orbital-state ${sessionState}`} aria-label={`현재 상태: ${stateLabel}`}>
-          <span />
-          <strong>{stateLabel}</strong>
-          <small>{statusText}</small>
-        </div>
+    <main className="studio-shell" id="main-content">
+      <a className="skip-link" href="#studio-content">본문으로 건너뛰기</a>
+      <header className="studio-header">
+        <div className="studio-ident"><p className="eyebrow">Private writing studio</p><h1>World Room</h1><p className="world-name">{selectedWorld?.title || worldTitle || "아직 이름 없는 세계"}</p></div>
+        <nav className="mode-nav" aria-label="작업 모드">{modeLabels.map((mode) => <button key={mode.id} type="button" aria-pressed={activeMode === mode.id} onClick={() => setActiveMode(mode.id)}>{mode.label}</button>)}</nav>
+        <div className="header-actions"><button className="text-button" type="button" onClick={() => setLibraryOpen((current) => !current)} aria-expanded={libraryOpen}>보관함</button><button className="new-world-button" type="button" onClick={() => setSeedOpen(true)}>새 세계</button></div>
+      </header>
+      {(error || saveStatus) && <p className="studio-notice" role="status">{error || saveStatus}</p>}
+      <section className="studio-content" id="studio-content">
+        {activeMode === "conversation" && <section className="conversation-stage" aria-labelledby="conversation-title">
+          <div className="conversation-intro"><p className="eyebrow">오늘의 장면</p><h2 id="conversation-title">말로 다음 장면을 찾아보세요</h2><p>동반자와 이야기하면, 결정된 설정과 장면의 실마리가 이 세계의 기록으로 남습니다.</p></div>
+          <div className="conversation-layout"><section className="transcript-sheet" aria-label="대화 기록"><div className="sheet-heading"><span>대화 기록</span><span>{stateLabel}</span></div><div className="transcript-list">{transcript.map((line) => <article className={`line ${line.speaker === "사용자" ? "user" : "assistant"}`} key={line.id}><span>{line.speaker}</span><p>{line.text}</p></article>)}</div></section><aside className="conversation-margin" aria-label="대화 단서"><p className="margin-label">대화에서 포착한 단서</p>{sparks.length ? <div className="spark-list">{sparks.map((spark) => <button key={spark} onClick={() => sendTextPrompt(`${spark}를 바탕으로 다음 질문을 하나 던져줘.`)} disabled={!isRealtimeReady}>{spark}</button>)}</div> : <p className="empty-panel-copy">아직 단서가 없습니다. 첫 문장을 말하면 세계의 결이 기록됩니다.</p>}</aside></div>
+          <footer className="voice-dock" aria-label="대화 조작"><div className={`voice-pulse ${sessionState}`} aria-hidden="true"><span /></div><div><strong>{statusText}</strong><span>마이크로 말하면 대화가 기록됩니다.</span></div><div className="voice-actions"><button className="primary-button" onClick={startSession} disabled={sessionState === "requesting" || sessionState === "connecting"}>{sessionState === "idle" || sessionState === "ended" || sessionState === "error" ? "대화 시작" : "대화 다시 시작"}</button><button className="icon-button" onClick={toggleMute} disabled={!streamRef.current}>{muted ? "마이크 켜기" : "마이크 끄기"}</button><button className="text-button" onClick={() => stopSession()} disabled={!peerRef.current}>종료</button><button className="text-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>{isSaving ? "저장 중" : "세계 저장"}</button></div></footer>
+        </section>}
+        {activeMode === "manuscript" && <section className="writing-view" aria-labelledby="manuscript-title"><p className="eyebrow">Manuscript</p><h2 id="manuscript-title">원고</h2><p className="view-lead">채택한 장면이 이곳에서 한 편의 이야기로 이어집니다.</p><article className="empty-manuscript"><span>01</span><h3>아직 채택된 장면이 없습니다</h3><p>대화에서 떠오른 장면을 검토하고 채택하면, 이곳에 작가의 원고로 쌓입니다.</p><button type="button" onClick={() => setActiveMode("conversation")}>대화로 돌아가기</button></article></section>}
+        {activeMode === "bible" && <section className="writing-view" aria-labelledby="bible-title"><p className="eyebrow">World bible</p><h2 id="bible-title">세계 성경</h2><p className="view-lead">인물, 장소, 규칙과 사건을 대화의 근거와 함께 보관합니다.</p><div className="bible-columns"><article><span>인물</span><p>대화에서 인물이 구체화되면 이곳에 연결됩니다.</p></article><article><span>장소와 규칙</span><p>세계의 질서를 흔들지 않도록 기록합니다.</p></article><article><span>미해결 갈등</span><p>다음 장면에서 다시 꺼낼 긴장을 모읍니다.</p></article></div></section>}
       </section>
-
-      <section className="control-strip" aria-label="세션 조작">
-        <button className="primary-button" onClick={startSession} disabled={sessionState === "requesting" || sessionState === "connecting"}>
-          {sessionState === "idle" || sessionState === "ended" || sessionState === "error" ? "세션 시작" : "세션 재시작"}
-        </button>
-        <button className="icon-button" onClick={toggleMute} disabled={!streamRef.current}>
-          {muted ? "마이크 켜기" : "마이크 끄기"}
-        </button>
-        <button className="ghost-button" onClick={() => stopSession()} disabled={!peerRef.current}>
-          세션 종료
-        </button>
-        <button className="icon-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>
-          {isSaving ? "저장 중" : "세계 저장"}
-        </button>
-        {(error || saveStatus) && (
-          <div className="connection-note" role="status">
-            <strong>{error || saveStatus}</strong>
-          </div>
-        )}
-      </section>
-
-      <section className="recent-worlds" aria-label="최근 저장한 세계">
-        <div className="panel-heading">
-          <p className="eyebrow">Saved worlds</p>
-          <h2>최근 세계</h2>
-        </div>
-        <div className="world-card-grid">
-          {recentWorlds.length ? (
-            recentWorlds.map((world) => (
-              <article className={selectedWorld?.id === world.id ? "world-card selected" : "world-card"} key={world.id}>
-                <span>{world.updatedAt ? new Date(world.updatedAt).toLocaleString("ko-KR") : "최근 저장"}</span>
-                <h3>{world.title}</h3>
-                <p>{world.summary}</p>
-                <div className="world-card-actions">
-                  <button onClick={() => continueWorld(world)}>{world.title} 이어 말하기</button>
-                  <button className="danger-button" onClick={() => void deleteWorld(world)}>
-                    {world.title} 삭제
-                  </button>
-                </div>
-              </article>
-            ))
-          ) : (
-            <article className="world-card empty">
-              <span>아직 저장된 세계가 없습니다</span>
-              <h3>첫 세계를 말로 열어보세요</h3>
-              <p>대화가 생긴 뒤 세계 저장을 누르면 최근 세계 카드가 여기에 나타납니다.</p>
-            </article>
-          )}
-        </div>
-      </section>
-
-      <section className="seed-panel" aria-label="새 세계 설정">
-        <div className="panel-heading">
-          <p className="eyebrow">World seed</p>
-          <h2>새 세계 열기</h2>
-        </div>
-        <label className="seed-input">
-          세계 이름
-          <input
-            value={worldTitle}
-            onChange={(event) => setWorldTitle(event.target.value)}
-            placeholder="예: 거꾸로 비가 내리는 항구"
-          />
-        </label>
-        <label className="seed-input">
-          세계 씨앗
-          <textarea
-            value={worldSeed}
-            onChange={(event) => setWorldSeed(event.target.value)}
-            placeholder="예: 비가 위로 내리는 항구 도시, 이름이 금지된 왕국"
-            rows={3}
-          />
-        </label>
-        <ChoiceButtons label="분위기" options={moodOptions} value={mood} onChange={setMood} />
-        <ChoiceButtons label="장르" options={genreOptions} value={genre} onChange={setGenre} />
-        <ChoiceButtons label="동반자 방식" options={companionModes} value={companionMode} onChange={setCompanionMode} />
-        <button className="seed-save-button" onClick={saveWorldSession} disabled={!canSaveWorld || isSaving}>
-          {isSaving ? "저장 중" : "현재 세계 저장"}
-        </button>
-      </section>
-
-      <section className="studio-grid">
-        <section className="transcript-panel" aria-label="대화 transcript">
-          <div className="panel-heading">
-            <p className="eyebrow">Live transcript</p>
-            <h2>대화 기록</h2>
-          </div>
-          <div className="transcript-list">
-            {transcript.map((line) => (
-              <article className={`line ${line.speaker === "사용자" ? "user" : "assistant"}`} key={line.id}>
-                <span>{line.speaker}</span>
-                <p>{line.text}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <aside className="side-stack">
-          <section className="spark-panel">
-            <div className="panel-heading">
-              <p className="eyebrow">World sparks</p>
-              <h2>세계 단서</h2>
-            </div>
-            <div className="spark-list">
-              {sparks.length ? (
-                sparks.map((spark) => (
-                  <button
-                    key={spark}
-                    onClick={() => sendTextPrompt(`${spark}를 바탕으로 다음 질문을 하나 던져줘.`)}
-                    disabled={!isRealtimeReady}
-                  >
-                    {spark}
-                  </button>
-                ))
-              ) : (
-                <p className="empty-panel-copy">아직 세계 단서가 없습니다.</p>
-              )}
-            </div>
-            {!isRealtimeReady && <p className="panel-hint">세션이 연결되면 세계 단서를 대화에 다시 던질 수 있습니다.</p>}
-          </section>
-        </aside>
-      </section>
-
-      <section className="notes-grid">
-        <article>
-          <h2>구현 구조</h2>
-          <p>
-            브라우저는 WebRTC 연결, 마이크 입력, 원격 오디오 출력, 데이터 채널 이벤트, transcript 표시를 맡습니다.
-            로컬 서버는 `OPENAI_API_KEY`를 사용해 `/v1/realtime/client_secrets`에서 짧게 쓰는 client secret만 발급합니다.
-          </p>
-        </article>
-        <article>
-          <h2>검증 체크리스트</h2>
-          <ul>
-            {validationItems.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-        </article>
-      </section>
+      {libraryOpen && <aside className="library-panel" aria-label="작업 보관함"><div className="panel-heading"><div><p className="eyebrow">Saved worlds</p><h2>최근 세계</h2></div><button className="text-button" type="button" onClick={() => setLibraryOpen(false)}>닫기</button></div><div className="world-card-grid">{recentWorlds.length ? recentWorlds.map((world) => <article className={selectedWorld?.id === world.id ? "world-card selected" : "world-card"} key={world.id}><span>{world.updatedAt ? new Date(world.updatedAt).toLocaleDateString("ko-KR") : "최근 저장"}</span><h3>{world.title}</h3><p>{world.summary}</p><div className="world-card-actions"><button onClick={() => { continueWorld(world); setLibraryOpen(false); }}>{world.title} 이어 말하기</button><button className="danger-button" onClick={() => void deleteWorld(world)}>{world.title} 삭제</button></div></article>) : <p className="empty-panel-copy">저장한 세계가 아직 없습니다.</p>}</div></aside>}
+      {seedOpen && <dialog className="seed-dialog" open aria-label="새 세계 열기"><form method="dialog" onSubmit={(event) => { event.preventDefault(); setSeedOpen(false); setStatusText("새 세계의 첫 문장을 기다리고 있습니다."); }}><div className="dialog-heading"><div><p className="eyebrow">New world</p><h2>새 세계 열기</h2></div><button className="text-button" type="button" onClick={() => setSeedOpen(false)}>닫기</button></div><p>완벽한 설정은 필요 없습니다. 한 줄의 씨앗이면 충분합니다.</p><label className="seed-input">세계 이름<input value={worldTitle} onChange={(event) => setWorldTitle(event.target.value)} placeholder="예: 거꾸로 비가 내리는 항구" /></label><label className="seed-input">세계 씨앗<textarea value={worldSeed} onChange={(event) => setWorldSeed(event.target.value)} placeholder="예: 비가 위로 내리는 항구 도시" rows={3} /></label><ChoiceButtons label="분위기" options={moodOptions} value={mood} onChange={setMood} /><ChoiceButtons label="장르" options={genreOptions} value={genre} onChange={setGenre} /><ChoiceButtons label="동반자 방식" options={companionModes} value={companionMode} onChange={setCompanionMode} /><button className="seed-save-button" type="submit">이 세계 열기</button></form></dialog>}
     </main>
   );
 }
-
 function ChoiceButtons({
   label,
   options,
