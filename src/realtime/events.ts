@@ -64,7 +64,7 @@ export function reduceRealtimeEvent(event: RealtimeEvent): RealtimeSignal[] {
     ];
   }
 
-  if (type.includes("response.audio_transcript") && (event.transcript || event.delta)) {
+  if ((type.includes("response.audio_transcript") || type.includes("response.output_audio_transcript")) && (event.transcript || event.delta)) {
     const text = event.transcript ?? event.delta ?? "";
     return [
       {
