@@ -75,7 +75,7 @@ beforeEach(() => {
           }),
         };
       }
-      if (url.includes("/api/token")) {
+      if (options === undefined || String(url).includes("localhost:8787/token")) {
         return { ok: true, json: async () => ({ value: "test-secret" }) };
       }
       return { ok: true, text: async () => "answer-sdp" };
