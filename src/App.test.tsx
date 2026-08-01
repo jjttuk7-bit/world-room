@@ -152,6 +152,28 @@ describe("World Room 앱", () => {
     expect(events[0].session.instructions).toContain("선택지 제안");
     expect(events[0].session.instructions).toContain("사용자에게 확인");
   });
+  it("저장 세계를 이어갈 때 이전 새 세계 렌즈를 세션 지침에 섞지 않는다", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "어두운" }));
+    fireEvent.click(screen.getByRole("button", { name: "미스터리" }));
+    fireEvent.click(screen.getByRole("button", { name: "선택지 제안" }));
+    fireEvent.click(await screen.findByRole("button", { name: "안개 도시 이어 말하기" }));
+    fireEvent.click(screen.getByRole("button", { name: /세션 시작/ }));
+
+    await waitFor(() => expect(RTCPeerConnection).toHaveBeenCalled());
+    peer.channel.open();
+    await waitFor(() => expect(peer.channel.sent).toHaveLength(3));
+
+    const instructions = JSON.parse(peer.channel.sent[0]).session.instructions;
+    expect(instructions).toContain("안개 도시와 사라진 지도 제작자를 이어간다.");
+    expect(instructions).toContain("분위기: 아직 정해지지 않음");
+    expect(instructions).toContain("장르: 아직 정해지지 않음");
+    expect(instructions).toContain("동반자 방식: 아직 정해지지 않음");
+    expect(instructions).not.toContain("어두운");
+    expect(instructions).not.toContain("미스터리");
+    expect(instructions).not.toContain("선택지 제안");
+  });
   it("저장된 세계를 삭제할 수 있다", async () => {
     render(<App />);
 

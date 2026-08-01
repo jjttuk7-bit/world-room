@@ -335,16 +335,25 @@ export default function App() {
   }
 
   function buildBriefInstructions() {
+    const isContinuingWorld = Boolean(selectedWorld);
     const title = selectedWorld?.title ?? (worldTitle.trim() || "아직 정해지지 않음");
     const seed = selectedWorld?.continuityBrief ?? (worldSeed.trim() || "아직 정해지지 않음");
+    const unspecified = "아직 정해지지 않음";
+    const activeMood = isContinuingWorld ? unspecified : mood;
+    const activeGenre = isContinuingWorld ? unspecified : genre;
+    const activeCompanionMode = isContinuingWorld ? unspecified : companionMode;
+    const continuityRule = isContinuingWorld
+      ? "저장된 세계의 연속성 브리프를 최우선으로 하며, 별도 렌즈는 아직 정해지지 않음으로 취급하세요."
+      : "";
 
     return `당신은 World Room의 한국어 창작 동반자입니다. 아래 창작 브리프를 이 세션의 최우선 지침으로 적용하세요.
 창작 브리프:
 - 제목: ${title}
 - 씨앗: ${seed}
-- 분위기: ${mood}
-- 장르: ${genre}
-- 동반자 방식: ${companionMode}
+- 분위기: ${activeMood}
+- 장르: ${activeGenre}
+- 동반자 방식: ${activeCompanionMode}
+${continuityRule}
 브리프를 정교화하거나 확장하는 아이디어만 제안하세요. 브리프와 실질적으로 충돌하는 제안이 필요하면 채택하지 말고, 무엇이 충돌하는지 짧게 설명한 뒤 사용자에게 확인을 요청하세요. 첫 응답은 아직 정해지지 않은 요소를 좁히는 짧은 질문 하나로 시작하세요.`;
   }
   function buildSeedPrompt(seed: string, selectedMood: string, selectedGenre: string, mode: string) {
