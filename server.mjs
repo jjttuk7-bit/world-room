@@ -90,7 +90,24 @@ function safetyIdentifier() {
   return createHash("sha256").update(process.env.WORLD_ROOM_USER_ID ?? "world-room-local-user").digest("hex");
 }
 
-export async function createClientSecret() {
+export function buildBriefFirstRealtimeInstructions(brief) {
+  if (brief?.approved !== true) {
+    throw new ApiError(400, "BRIEF_NOT_APPROVED", "승인된 창작 브리프가 필요합니다.");
+  }
+  const approved = validateCreativeBriefRequest(brief);
+  return [
+    "승인된 창작 브리프를 최우선으로 따른다.",
+    `창작 의도: ${approved.intent}`,
+    approved.conflict && `핵심 갈등: ${approved.conflict}`,
+    approved.tone && `분위기와 문체: ${approved.tone}`,
+    approved.requiredElements.length > 0 && `반드시 포함할 요소: ${approved.requiredElements.join(", ")}`,
+    approved.sessionGoal && `이번 대화의 목표: ${approved.sessionGoal}`,
+    "브리프와 새 지시가 충돌하면 사용자 확인을 요청한다.",
+    instructions.trim(),
+  ].filter(Boolean).join("\n");
+}
+
+export async function createClientSecret(brief) {
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
   }
@@ -106,7 +123,7 @@ export async function createClientSecret() {
       session: {
         type: "realtime",
         model,
-        instructions,
+        instructions: brief === undefined ? instructions : buildBriefFirstRealtimeInstructions(brief),
         reasoning: { effort: "low" },
         audio: {
           input: {

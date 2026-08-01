@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { buildSessionRecord, createSupabaseRepository, deleteWorldRecord, generateStoryDraft, getWorldStory, holdSavedStoryDraft, listWorldDrafts, saveCreativeBrief, saveSessionRecord, validateStoryDraftRequest } from "./server.mjs";
@@ -465,5 +466,32 @@ describe("이야기 초안 소유 범위와 재개", () => {
     await expect(holdSavedStoryDraft("world-1", "draft-1", { repository })).resolves.toEqual({ id: "draft-1", status: "held" });
     expect(repository.listStoryDrafts).toHaveBeenCalledWith("world-1", { worldChecked: true });
     expect(repository.holdStoryDraft).toHaveBeenCalledWith("world-1", "draft-1", { worldChecked: true });
+  });
+});
+describe("Realtime 토큰 경로", () => {
+  it("POST /api/token은 미승인 브리프를 거절하고 승인 브리프만 발급한다", async () => {
+    vi.resetModules();
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => ({ value: "client-secret" }) })));
+    const { default: handler } = await import("./api/token.js");
+    const brief = { intent: "안개 속 항구의 사공", conflict: "사라진 지도", tone: "몽환적", requiredElements: [], sessionGoal: "첫 장면" };
+    const request = (payload) => {
+      const req = new EventEmitter();
+      req.method = "POST";
+      req.setEncoding = vi.fn();
+      const response = { status: 0, body: undefined };
+      const res = { writeHead: (status) => { response.status = status; }, end: (body) => { response.body = JSON.parse(body); } };
+      queueMicrotask(() => { req.emit("data", JSON.stringify(payload)); req.emit("end"); });
+      return { req, res, response };
+    };
+
+    const rejected = request(brief);
+    await handler(rejected.req, rejected.res);
+    expect(rejected.response.status).toBe(400);
+
+    const accepted = request({ ...brief, approved: true });
+    await handler(accepted.req, accepted.res);
+    expect(accepted.response.status).toBe(200);
+    expect(accepted.response.body).toEqual({ value: "client-secret" });
   });
 });
