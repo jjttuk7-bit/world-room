@@ -249,7 +249,7 @@ describe("World Room 앱", () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, options?: RequestInit) => {
       const url = String(input);
       if (url === "/api/creative-brief") return { ok: true, json: async () => ({ intent: "안개 속 항구의 사공", conflict: "사라진 지도", tone: "몽환적", requiredElements: [], sessionGoal: "첫 장면" , approved: false }) } as Response;
-      if (url === "/api/token") return { ok: true, json: async () => ({ value: "ephemeral-key" }) } as Response;
+      if (url === "/api/token" || url === (import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token")) return { ok: true, json: async () => ({ value: "ephemeral-key" }) } as Response;
       if (url === "https://api.openai.com/v1/realtime/calls") return { ok: true, text: async () => "answer" } as Response;
       if (url === "/api/sessions" && options?.method === "POST") return { ok: true, json: async () => ({ ok: true, path: "supabase/worlds/world-saved", worldId: "world-saved", sessionId: "session-saved" }) } as Response;
       if (url.includes("/worlds/recent")) return { ok: true, json: async () => ({ worlds: [] }) } as Response;
@@ -263,12 +263,12 @@ describe("World Room 앱", () => {
     fireEvent.click(screen.getByRole("button", { name: "이 브리프로 대화 시작" }));
     fireEvent.click(screen.getByRole("button", { name: "대화 시작" }));
     await waitFor(() => expect(channel).toBeDefined());
-    expect(fetch).toHaveBeenCalledWith("/api/token", expect.objectContaining({
+    expect(fetch).toHaveBeenCalledWith(import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token", expect.objectContaining({
       method: "POST",
       body: expect.stringContaining("안개 속 항구의 사공"),
     }));
     const calls = vi.mocked(fetch).mock.calls;
-    expect(calls.findIndex(([url]) => url === "/api/token")).toBeLessThan(calls.findIndex(([url]) => url === "https://api.openai.com/v1/realtime/calls"));
+    expect(calls.findIndex(([url]) => url === (import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token"))).toBeLessThan(calls.findIndex(([url]) => url === "https://api.openai.com/v1/realtime/calls"));
     channel?.dispatchEvent(new Event("open"));
     channel?.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "conversation.item.input_audio_transcription.completed", transcript: "안개 속 항구의 사공은 사라진 지도를 찾아야 합니다." }) }));
     channel?.dispatchEvent(new MessageEvent("message", { data: JSON.stringify({ type: "response.audio_transcript.done", transcript: "설정: 항구의 물길은 매일 밤 다른 기억을 품습니다." }) }));
