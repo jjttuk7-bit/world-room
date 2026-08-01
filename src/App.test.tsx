@@ -75,7 +75,7 @@ beforeEach(() => {
           }),
         };
       }
-      if (options === undefined || String(url).includes("localhost:8787/token")) {
+      if (String(url) === "/api/token" || String(url) === (import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token")) {
         return { ok: true, json: async () => ({ value: "test-secret" }) };
       }
       return { ok: true, text: async () => "answer-sdp" };
@@ -88,6 +88,16 @@ afterEach(() => {
 });
 
 describe("World Room 앱", () => {
+  it("허용된 token endpoint에만 client secret을 반환한다", async () => {
+    const configuredTokenUrl = import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token";
+    const configuredTokenResponse = await fetch(configuredTokenUrl);
+    const defaultTokenResponse = await fetch("/api/token");
+    const unknownGetResponse = await fetch("http://localhost:8787/health");
+
+    await expect(configuredTokenResponse.json()).resolves.toEqual({ value: "test-secret" });
+    await expect(defaultTokenResponse.json()).resolves.toEqual({ value: "test-secret" });
+    expect(unknownGetResponse).not.toHaveProperty("json");
+  });
   it("한국어 Realtime 음성 세션 시작 화면을 보여준다", async () => {
     render(<App />);
 
@@ -139,6 +149,7 @@ describe("World Room 앱", () => {
     fireEvent.click(screen.getByRole("button", { name: /세션 시작/ }));
 
     await waitFor(() => expect(RTCPeerConnection).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token");
     peer.channel.open();
 
     await waitFor(() => expect(peer.channel.sent).toHaveLength(3));
@@ -162,6 +173,7 @@ describe("World Room 앱", () => {
     fireEvent.click(screen.getByRole("button", { name: /세션 시작/ }));
 
     await waitFor(() => expect(RTCPeerConnection).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(import.meta.env.VITE_REALTIME_TOKEN_URL ?? "/api/token");
     peer.channel.open();
     await waitFor(() => expect(peer.channel.sent).toHaveLength(3));
 
