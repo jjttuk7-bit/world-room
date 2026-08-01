@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const apiKey = process.env.OPENAI_API_KEY;
 const summaryModel = process.env.OPENAI_SUMMARY_MODEL ?? "gpt-5.4-mini";
 const supabaseUrl = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const defaultWorkspaceOwnerId = process.env.WORLD_ROOM_OWNER_ID ?? "00000000-0000-0000-0000-000000000001";
 
 const instructions = `
 당신은 World Room의 실시간 한국어 세계 만들기 동반자입니다.
@@ -48,7 +49,7 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN ?? "http://localhost:5173",
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
   });
   res.end(JSON.stringify(body));
@@ -69,11 +70,44 @@ function createDefaultRepository() {
   return createSupabaseRepository(supabase);
 }
 
+export class ApiError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function errorPayload(error, fallback = "요청을 처리하지 못했습니다.") {
+  const status = error instanceof ApiError ? error.status : 500;
+  const code = error instanceof ApiError ? error.code : "UPSTREAM_FAILURE";
+  const message = error instanceof Error ? error.message : fallback;
+  return { status, body: { error: { code, message } } };
+}
+
 function safetyIdentifier() {
   return createHash("sha256").update(process.env.WORLD_ROOM_USER_ID ?? "world-room-local-user").digest("hex");
 }
 
-export async function createClientSecret() {
+export function buildBriefFirstRealtimeInstructions(brief) {
+  if (brief?.approved !== true) {
+    throw new ApiError(400, "BRIEF_NOT_APPROVED", "승인된 창작 브리프가 필요합니다.");
+  }
+  const approved = validateCreativeBriefRequest(brief);
+  return [
+    "승인된 창작 브리프를 최우선으로 따른다.",
+    `창작 의도: ${approved.intent}`,
+    approved.conflict && `핵심 갈등: ${approved.conflict}`,
+    approved.tone && `분위기와 문체: ${approved.tone}`,
+    approved.requiredElements.length > 0 && `반드시 포함할 요소: ${approved.requiredElements.join(", ")}`,
+    approved.sessionGoal && `이번 대화의 목표: ${approved.sessionGoal}`,
+    "브리프와 새 지시가 충돌하면 사용자 확인을 요청한다.",
+    instructions.trim(),
+  ].filter(Boolean).join("\n");
+}
+
+export async function createClientSecret(brief) {
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
   }
@@ -89,7 +123,7 @@ export async function createClientSecret() {
       session: {
         type: "realtime",
         model,
-        instructions,
+        instructions: brief === undefined ? instructions : buildBriefFirstRealtimeInstructions(brief),
         reasoning: { effort: "low" },
         audio: {
           input: {
@@ -283,6 +317,271 @@ ${(payload.sparks ?? []).join("\n")}`,
   return JSON.parse(text);
 }
 
+const STORY_LIMITS = Object.freeze({
+  worldCharacters: 3000,
+  transcriptItems: 16,
+  transcriptCharacters: 10000,
+  canonItems: 24,
+  canonCharacters: 6000,
+  itemCharacters: 1000,
+});
+
+function boundedText(value, label, max) {
+  const text = String(value ?? "").trim();
+  if (text.length > max) throw new Error(`${label}은 ${max}자 이하여야 합니다.`);
+  return text;
+}
+
+function uniqueIds(items) {
+  return [...new Set(items.map((item) => String(item.id ?? "").trim()).filter(Boolean))];
+}
+
+function parseResponseText(data) {
+  const text = data.output_text ?? data.output?.flatMap((item) => item.content ?? []).find((item) => item.text)?.text;
+  if (!text) throw new Error("장면 초안 응답이 비어 있습니다.");
+  try { return JSON.parse(text); } catch { throw new Error("장면 초안 응답 형식이 올바르지 않습니다."); }
+}
+
+function sentenceCount(body) {
+  return String(body).trim().split(/[.!?…。]+(?:\s|$)/).filter(Boolean).length;
+}
+
+const CREATIVE_BRIEF_LIMITS = Object.freeze({
+  intent: 1200,
+  conflict: 800,
+  tone: 400,
+  requiredElements: 8,
+  requiredElement: 240,
+  sessionGoal: 600,
+});
+
+function validateCreativeBriefRequestUnsafe(payload) {
+  const intent = boundedText(payload?.intent, "창작 의도", CREATIVE_BRIEF_LIMITS.intent);
+  if (!intent) throw new Error("창작 의도가 필요합니다.");
+  const conflict = boundedText(payload?.conflict, "핵심 갈등", CREATIVE_BRIEF_LIMITS.conflict);
+  const tone = boundedText(payload?.tone, "분위기와 문체", CREATIVE_BRIEF_LIMITS.tone);
+  const rawElements = Array.isArray(payload?.requiredElements) ? payload.requiredElements : [];
+  if (rawElements.length > CREATIVE_BRIEF_LIMITS.requiredElements) throw new Error("반드시 포함할 요소는 최대 8개까지 입력할 수 있습니다.");
+  const requiredElements = rawElements.map((item) => boundedText(item, "반드시 포함할 요소", CREATIVE_BRIEF_LIMITS.requiredElement)).filter(Boolean);
+  const sessionGoal = boundedText(payload?.sessionGoal, "이번 대화의 목표", CREATIVE_BRIEF_LIMITS.sessionGoal);
+  return { intent, conflict, tone, requiredElements, sessionGoal };
+}
+
+export function validateCreativeBriefRequest(payload) {
+  try {
+    return validateCreativeBriefRequestUnsafe(payload);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "VALIDATION_ERROR", error instanceof Error ? error.message : "창작 브리프 요청이 올바르지 않습니다.");
+  }
+}
+
+function parseCreativeBriefResponse(data) {
+  const generated = parseResponseText(data);
+  return validateCreativeBriefRequestUnsafe(generated);
+}
+
+export async function generateCreativeBrief(payload, options = {}) {
+  const request = validateCreativeBriefRequest(payload);
+  const secret = options.apiKey ?? apiKey;
+  if (!secret) throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": safetyIdentifier() },
+    body: JSON.stringify({
+      model: process.env.OPENAI_BRIEF_MODEL ?? summaryModel,
+      input: [
+        { role: "system", content: "당신은 한국어 소설 창작 스튜디오의 기획 편집자입니다. 사용자의 창작 의도를 존중해 대화를 시작하기 전의 짧고 구체적인 창작 브리프를 제안합니다. 알 수 없는 내용은 빈 문자열 또는 빈 배열로 두며, 이야기를 새로 시작하거나 설정을 단정하지 않습니다." },
+        { role: "user", content: JSON.stringify(request) },
+      ],
+      text: { format: { type: "json_schema", name: "world_room_creative_brief", schema: { type: "object", additionalProperties: false, required: ["intent", "conflict", "tone", "requiredElements", "sessionGoal"], properties: { intent: { type: "string" }, conflict: { type: "string" }, tone: { type: "string" }, requiredElements: { type: "array", items: { type: "string" } }, sessionGoal: { type: "string" } } } } },
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message ?? "창작 브리프 제안에 실패했습니다.");
+  return { ...parseCreativeBriefResponse(data), approved: false };
+}
+
+export function buildApprovedBriefOpeningContext(brief) {
+  if (!brief?.approved) return "";
+  const approved = validateCreativeBriefRequestUnsafe(brief);
+  return [
+    "오늘의 창작 브리프:",
+    `창작 의도: ${approved.intent}`,
+    approved.conflict && `핵심 갈등: ${approved.conflict}`,
+    approved.tone && `분위기와 문체: ${approved.tone}`,
+    approved.requiredElements.length > 0 && `반드시 포함할 요소: ${approved.requiredElements.join(", ")}`,
+    approved.sessionGoal && `이번 대화의 목표: ${approved.sessionGoal}`,
+    "새 이야기를 독단적으로 시작하지 말고, 이 브리프의 어느 지점부터 열지 한 가지 질문으로 물으세요.",
+  ].filter(Boolean).join("\n");
+}
+function validateStoryDraftRequestUnsafe(payload) {
+  const worldId = String(payload?.worldId ?? "").trim();
+  if (!worldId) throw new Error("세계 ID가 필요합니다.");
+  const sessionId = String(payload?.sessionId ?? "").trim() || null;
+  const worldTitle = boundedText(payload?.world?.title, "세계 제목", 160);
+  const continuityBrief = boundedText(payload?.world?.continuityBrief ?? payload?.world?.summary, "세계 설명", STORY_LIMITS.worldCharacters);
+  const rawTranscript = Array.isArray(payload?.transcript) ? payload.transcript : [];
+  if (!rawTranscript.length) throw new Error("장면 초안에 사용할 대화가 없습니다.");
+  if (rawTranscript.length > STORY_LIMITS.transcriptItems) throw new Error("대화 맥락은 최대 16개까지 사용할 수 있습니다.");
+  const transcript = rawTranscript.map((line) => ({
+    id: boundedText(line?.id, "대화 ID", 160),
+    speaker: boundedText(line?.speaker ?? "대화자", "화자", 80),
+    text: boundedText(line?.text, "대화 내용", STORY_LIMITS.itemCharacters),
+  }));
+  if (transcript.some((line) => !line.id || !line.text)) throw new Error("대화 ID와 내용이 필요합니다.");
+  if (transcript.reduce((total, line) => total + line.text.length, 0) > STORY_LIMITS.transcriptCharacters) throw new Error("대화 맥락이 너무 깁니다.");
+  const rawCanon = Array.isArray(payload?.canon) ? payload.canon : [];
+  if (rawCanon.length > STORY_LIMITS.canonItems) throw new Error("세계 성경은 최대 24개까지 사용할 수 있습니다.");
+  const canon = rawCanon.map((card) => ({
+    id: boundedText(card?.id, "세계 성경 ID", 160),
+    type: boundedText(card?.type ?? "setting", "세계 성경 종류", 80),
+    content: boundedText(card?.content, "세계 성경 내용", STORY_LIMITS.itemCharacters),
+  }));
+  if (canon.some((card) => !card.id || !card.content)) throw new Error("세계 성경 ID와 내용이 필요합니다.");
+  if (canon.reduce((total, card) => total + card.content.length, 0) > STORY_LIMITS.canonCharacters) throw new Error("세계 성경 맥락이 너무 깁니다.");
+  return { worldId, sessionId, world: { title: worldTitle, continuityBrief }, transcript, canon };
+}
+
+export function validateStoryDraftRequest(payload) {
+  try {
+    return validateStoryDraftRequestUnsafe(payload);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(400, "VALIDATION_ERROR", error instanceof Error ? error.message : "장면 초안 요청이 올바르지 않습니다.");
+  }
+}
+export async function generateStoryDraft(payload, options = {}) {
+  const context = validateStoryDraftRequest(payload);
+  const secret = options.apiKey ?? apiKey;
+  if (!secret) throw new Error("OPENAI_API_KEY가 설정되어 있지 않습니다.");
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const response = await fetchImpl("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json", "OpenAI-Safety-Identifier": safetyIdentifier() },
+    body: JSON.stringify({
+      model: process.env.OPENAI_STORY_MODEL ?? summaryModel,
+      input: [{ role: "system", content: "당신은 한국어 소설 창작 스튜디오의 장면 초안 작가입니다. 제공된 세계와 대화 근거만 사용해 3~6문장의 응집된 장면을 작성합니다. 설정을 확정하지 말고 제안으로 씁니다." }, { role: "user", content: JSON.stringify(context) }],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "world_room_story_draft",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["title", "body", "sourceTranscriptIds", "relatedCanonIds"],
+            properties: {
+              title: { type: "string" },
+              body: { type: "string" },
+              sourceTranscriptIds: { type: "array", items: { type: "string" } },
+              relatedCanonIds: { type: "array", items: { type: "string" } },
+            },
+          },
+        },
+      },
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error?.message ?? "장면 초안 생성에 실패했습니다.");
+  const generated = parseResponseText(data);
+  const title = boundedText(generated.title, "초안 제목", 160);
+  const body = boundedText(generated.body, "초안 본문", 5000);
+  const sentences = sentenceCount(body);
+  if (sentences < 3 || sentences > 6) throw new Error("장면 초안은 3~6문장이어야 합니다.");
+  const sourceTranscriptIds = uniqueIds(Array.isArray(generated.sourceTranscriptIds) ? generated.sourceTranscriptIds.map((id) => ({ id })) : []);
+  const relatedCanonIds = uniqueIds(Array.isArray(generated.relatedCanonIds) ? generated.relatedCanonIds.map((id) => ({ id })) : []);
+  const availableTranscriptIds = new Set(uniqueIds(context.transcript));
+  const availableCanonIds = new Set(uniqueIds(context.canon));
+  if (sourceTranscriptIds.some((id) => !availableTranscriptIds.has(id))) throw new Error("초안이 제공되지 않은 대화 근거를 참조했습니다.");
+  if (relatedCanonIds.some((id) => !availableCanonIds.has(id))) throw new Error("초안이 제공되지 않은 세계 성경 근거를 참조했습니다.");
+  return { id: `draft-${randomUUID()}`, worldId: context.worldId, sessionId: context.sessionId, title, body, status: "proposed", sourceTranscriptIds, relatedCanonIds, createdAt: new Date().toISOString() };
+}
+
+export async function createGeneratedStoryDraft(payload, options = {}) {
+  const context = validateStoryDraftRequest(payload);
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(context.worldId);
+  const draft = await generateStoryDraft(context, options);
+  return repository.insertStoryDraft(draft, { worldChecked: true });
+}
+export async function saveCreativeBrief(worldId, brief, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  if (brief?.approved !== true) throw new ApiError(400, "BRIEF_NOT_APPROVED", "승인된 창작 브리프만 저장할 수 있습니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  const approvedBrief = validateCreativeBriefRequest(brief);
+  return repository.saveCreativeBrief(cleanWorldId, {
+    id: options.idFactory?.() ?? `brief-${randomUUID()}`,
+    ...approvedBrief,
+    status: "active",
+  }, { worldChecked: true });
+}
+export async function getCurrentCreativeBrief(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  return { worldId: cleanWorldId, brief: await repository.getCurrentCreativeBrief(cleanWorldId, { worldChecked: true }) };
+}
+
+export async function getWorldStory(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  const [scenes, canon] = await Promise.all([
+    repository.listWorldManuscript(cleanWorldId, { worldChecked: true }),
+    repository.listWorldCanon(cleanWorldId, { worldChecked: true }),
+  ]);
+  return { worldId: cleanWorldId, scenes, canon };
+}
+
+export async function listWorldDrafts(worldId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  if (!cleanWorldId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  return { worldId: cleanWorldId, drafts: await repository.listStoryDrafts(cleanWorldId, { worldChecked: true }) };
+}
+
+export async function holdSavedStoryDraft(worldId, draftId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  const cleanDraftId = String(draftId ?? "").trim();
+  if (!cleanWorldId || !cleanDraftId) throw new ApiError(400, "VALIDATION_ERROR", "세계 ID와 초안 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  await repository.assertWorldOwned(cleanWorldId);
+  return repository.holdStoryDraft(cleanWorldId, cleanDraftId, { worldChecked: true });
+}
+
+export async function reviseSavedStoryDraft(worldId, draftId, payload, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  const cleanDraftId = String(draftId ?? "").trim();
+  if (!cleanWorldId || !cleanDraftId) throw new Error("세계 ID와 초안 ID가 필요합니다.");
+  const title = boundedText(payload?.title, "초안 제목", 160);
+  const body = boundedText(payload?.body, "초안 본문", 5000);
+  const sentences = sentenceCount(body);
+  if (sentences < 3 || sentences > 6) throw new Error("장면 초안은 3~6문장이어야 합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  return repository.reviseStoryDraft(cleanWorldId, cleanDraftId, { id: `draft-${randomUUID()}`, title, body, createdAt: new Date().toISOString() });
+}
+
+export async function acceptSavedStoryDraft(worldId, draftId, options = {}) {
+  const cleanWorldId = String(worldId ?? "").trim();
+  const cleanDraftId = String(draftId ?? "").trim();
+  if (!cleanWorldId || !cleanDraftId) throw new Error("세계 ID와 초안 ID가 필요합니다.");
+  const repository = options.repository ?? createDefaultRepository();
+  if (!repository) throw new Error("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되어 있지 않습니다.");
+  return repository.acceptStoryDraft(cleanWorldId, cleanDraftId);
+}
 export function buildSessionRecord(payload, options = {}) {
   const now = options.now ?? new Date();
   const stamp = formatTimestamp(now);
@@ -367,9 +666,35 @@ export function handleOptions(req, res) {
   return true;
 }
 
+export function sendApiError(res, error, fallback) {
+  const { status, body } = errorPayload(error, fallback);
+  sendJson(res, status, body);
+}
+
 export { sendJson };
 
-export function createSupabaseRepository(supabase) {
+export function createSupabaseRepository(supabase, { ownerId = defaultWorkspaceOwnerId } = {}) {
+  async function assertWorldOwned(worldId) {
+    const result = await assertNoError(
+      await supabase.from("worlds").select("id").eq("id", worldId).eq("owner_id", ownerId).limit(1),
+    );
+    const world = Array.isArray(result.data) ? result.data[0] : result.data;
+    if (!world?.id) throw new ApiError(403, "WORLD_ACCESS_DENIED", "이 세계에 접근할 권한이 없습니다.");
+    return world;
+  }
+
+  function toCreativeBrief(row) {
+    if (!row) return null;
+    return { id: row.id, worldId: row.world_id, intent: row.intent, conflict: row.conflict, tone: row.tone, requiredElements: [...(row.required_elements ?? [])], sessionGoal: row.session_goal, status: row.status, createdAt: row.created_at, approved: row.status === "active" };
+  }
+
+  function toStoryDraft(row) {
+    return {
+      id: row.id, worldId: row.world_id, sessionId: row.session_id, title: row.title, body: row.body, status: row.status,
+      sourceTranscriptIds: [...(row.source_transcript_ids ?? [])], relatedCanonIds: [...(row.related_canon_ids ?? [])],
+      parentDraftId: row.parent_draft_id, createdAt: row.created_at,
+    };
+  }
   async function assertNoError(result) {
     if (result?.error) {
       throw new Error(result.error.message ?? "Supabase 저장에 실패했습니다.");
@@ -384,6 +709,7 @@ export function createSupabaseRepository(supabase) {
           .from("worlds")
           .upsert({
             id: record.world.id,
+            owner_id: ownerId,
             title: record.world.title,
             summary: record.world.summary,
             continuity_brief: record.world.continuityBrief,
@@ -399,6 +725,7 @@ export function createSupabaseRepository(supabase) {
           .upsert({
             id: record.session.id,
             world_id: record.session.worldId,
+            owner_id: ownerId,
             title: record.session.title,
             transcript: record.session.transcript,
             sparks: record.session.sparks,
@@ -418,6 +745,7 @@ export function createSupabaseRepository(supabase) {
             record.canonCards.map((card) => ({
               id: card.id,
               world_id: card.worldId,
+              owner_id: ownerId,
               type: card.type,
               title: card.title,
               content: card.content,
@@ -452,6 +780,7 @@ export function createSupabaseRepository(supabase) {
         await supabase
           .from("worlds")
           .select("id,title,summary,continuity_brief,latest_session_id,updated_at")
+          .eq("owner_id", ownerId)
           .order("updated_at", { ascending: false })
           .limit(limit),
       );
@@ -466,8 +795,186 @@ export function createSupabaseRepository(supabase) {
       }));
     },
 
+    assertWorldOwned,
+
+    async getCurrentCreativeBrief(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.from("creative_briefs").select("id,world_id,intent,conflict,tone,required_elements,session_goal,status,created_at").eq("world_id", worldId).eq("owner_id", ownerId).eq("status", "active").order("created_at", { ascending: false }).limit(1),
+      );
+      return toCreativeBrief(Array.isArray(result.data) ? result.data[0] : result.data);
+    },
+
+    async saveCreativeBrief(worldId, brief, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.rpc("activate_creative_brief", {
+          p_world_id: worldId,
+          p_brief_id: brief.id,
+          p_owner_id: ownerId,
+          p_intent: brief.intent,
+          p_conflict: brief.conflict,
+          p_tone: brief.tone,
+          p_required_elements: [...(brief.requiredElements ?? [])],
+          p_session_goal: brief.sessionGoal,
+        }),
+      );
+      const activated = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!activated?.id) throw new Error("활성화된 창작 브리프를 찾을 수 없습니다.");
+      return {
+        id: activated.id,
+        worldId: activated.world_id,
+        intent: activated.intent,
+        conflict: activated.conflict,
+        tone: activated.tone,
+        requiredElements: [...(activated.required_elements ?? [])],
+        sessionGoal: activated.session_goal,
+        status: activated.status,
+        createdAt: activated.created_at,
+        approved: activated.status === "active",
+      };
+    },
+    async insertStoryDraft(draft, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(draft.worldId);
+      await assertNoError(
+        await supabase.from("story_drafts").insert({
+          id: draft.id,
+          world_id: draft.worldId,
+          owner_id: ownerId,
+          session_id: draft.sessionId ?? null,
+          title: draft.title,
+          body: draft.body,
+          status: draft.status ?? "proposed",
+          source_transcript_ids: [...(draft.sourceTranscriptIds ?? [])],
+          related_canon_ids: [...(draft.relatedCanonIds ?? [])],
+          parent_draft_id: draft.parentDraftId ?? null,
+          created_at: draft.createdAt ?? new Date().toISOString(),
+        }),
+      );
+      return { ...draft };
+    },
+
+    async reviseStoryDraft(worldId, draftId, revision, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.rpc("revise_story_draft", {
+          p_world_id: worldId,
+          p_parent_draft_id: draftId,
+          p_revision_id: revision.id,
+          p_title: revision.title,
+          p_body: revision.body,
+          p_owner_id: ownerId,
+          p_created_at: revision.createdAt ?? new Date().toISOString(),
+        }),
+      );
+      const created = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!created) {
+        throw new Error("수정된 초안을 찾을 수 없습니다.");
+      }
+      return {
+        id: created.id,
+        worldId: created.world_id,
+        sessionId: created.session_id,
+        title: created.title,
+        body: created.body,
+        status: created.status,
+        sourceTranscriptIds: [...(created.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(created.related_canon_ids ?? [])],
+        parentDraftId: created.parent_draft_id,
+        createdAt: created.created_at,
+      };
+    },
+
+    async acceptStoryDraft(worldId, draftId, acceptedAt = new Date().toISOString(), { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.rpc("accept_story_draft", {
+          p_world_id: worldId,
+          p_draft_id: draftId,
+          p_scene_id: `scene-${draftId}`,
+          p_owner_id: ownerId,
+          p_accepted_at: acceptedAt,
+        }),
+      );
+      const scene = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!scene) {
+        throw new Error("초안 채택 결과를 찾을 수 없습니다.");
+      }
+      return {
+        id: scene.id,
+        worldId: scene.world_id,
+        draftId: scene.draft_id,
+        title: scene.title,
+        content: scene.content,
+        order: scene.sequence,
+        acceptedAt: scene.accepted_at,
+        sourceTranscriptIds: [...(scene.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(scene.related_canon_ids ?? [])],
+      };
+    },
+    async listWorldManuscript(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase
+          .from("story_scenes")
+          .select("id,world_id,draft_id,title,content,sequence,status,accepted_at,source_transcript_ids,related_canon_ids")
+          .eq("world_id", worldId)
+          .eq("owner_id", ownerId)
+          .eq("status", "accepted")
+          .order("sequence", { ascending: true }),
+      );
+      return (result.data ?? []).map((scene) => ({
+        id: scene.id,
+        worldId: scene.world_id,
+        draftId: scene.draft_id,
+        title: scene.title,
+        content: scene.content,
+        order: scene.sequence,
+        acceptedAt: scene.accepted_at,
+        sourceTranscriptIds: [...(scene.source_transcript_ids ?? [])],
+        relatedCanonIds: [...(scene.related_canon_ids ?? [])],
+      }));
+    },
+
+    async listWorldCanon(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase
+          .from("canon_cards")
+          .select("id,world_id,type,title,content,source_session_id,created_at")
+          .eq("world_id", worldId)
+          .eq("owner_id", ownerId)
+          .order("created_at", { ascending: true }),
+      );
+      return (result.data ?? []).map((card) => ({
+        id: card.id, worldId: card.world_id, type: card.type, title: card.title, content: card.content,
+        sourceSessionId: card.source_session_id, createdAt: card.created_at,
+      }));
+    },
+    async listStoryDrafts(worldId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase
+          .from("story_drafts")
+          .select("id,world_id,session_id,title,body,status,source_transcript_ids,related_canon_ids,parent_draft_id,created_at")
+          .eq("world_id", worldId)
+          .eq("owner_id", ownerId)
+          .order("created_at", { ascending: false }),
+      );
+      return (result.data ?? []).map(toStoryDraft);
+    },
+
+    async holdStoryDraft(worldId, draftId, { worldChecked = false } = {}) {
+      if (!worldChecked) await assertWorldOwned(worldId);
+      const result = await assertNoError(
+        await supabase.from("story_drafts").update({ status: "held" }).eq("id", draftId).eq("world_id", worldId).eq("owner_id", ownerId).eq("status", "proposed").select("id,world_id,status"),
+      );
+      const held = Array.isArray(result.data) ? result.data[0] : result.data;
+      if (!held?.id) throw new ApiError(400, "DRAFT_NOT_HOLDABLE", "보류할 수 없는 초안입니다.");
+      return { id: held.id, worldId: held.world_id, status: held.status };
+    },
     async deleteWorld(worldId) {
-      await assertNoError(await supabase.from("worlds").delete().eq("id", worldId));
+      await assertNoError(await supabase.from("worlds").delete().eq("id", worldId).eq("owner_id", ownerId));
       return { ok: true, worldId };
     },
   };

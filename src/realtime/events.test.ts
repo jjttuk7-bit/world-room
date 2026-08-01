@@ -66,3 +66,12 @@ describe("세계 만들기 단서 추출", () => {
     ]);
   });
 });
+
+describe("output-audio transcript", () => {
+  it("records OpenAI output-audio transcript events as companion speech", () => {
+    expect(reduceRealtimeEvent({
+      type: "response.output_audio_transcript.done",
+      transcript: "설정: 항구의 시계는 바닷물을 거슬러 갑니다.",
+    })).toContainEqual(expect.objectContaining({ speaker: "동반자", final: true }));
+  });
+});
