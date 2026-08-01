@@ -2,8 +2,57 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
+class FakeDataChannel {
+  readyState: RTCDataChannelState = "connecting";
+  sent: string[] = [];
+  private listeners = new Map<string, Array<(event: MessageEvent) => void>>();
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  close() {
+    this.readyState = "closed";
+  }
+
+  send(message: string) {
+    this.sent.push(message);
+  }
+
+  open() {
+    this.readyState = "open";
+    this.listeners.get("open")?.forEach((listener) => listener(new MessageEvent("open")));
+  }
+}
+
+class FakePeerConnection {
+  connectionState: RTCPeerConnectionState = "new";
+  ontrack: ((event: RTCTrackEvent) => void) | null = null;
+  onconnectionstatechange: (() => void) | null = null;
+  channel = new FakeDataChannel();
+
+  addTrack() {}
+  createDataChannel() {
+    return this.channel as unknown as RTCDataChannel;
+  }
+  async createOffer() {
+    return { type: "offer" as RTCSdpType, sdp: "offer-sdp" };
+  }
+  async setLocalDescription() {}
+  async setRemoteDescription() {}
+  close() {}
+}
+
+let peer: FakePeerConnection;
 
 beforeEach(() => {
+  peer = new FakePeerConnection();
+  vi.stubGlobal("RTCPeerConnection", vi.fn(function FakeRTCPeerConnection() { return peer; }));
+  vi.stubGlobal("navigator", {
+    mediaDevices: {
+      getUserMedia: vi.fn(async () => ({ getAudioTracks: () => [], getTracks: () => [] })),
+    },
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, options?: RequestInit) => {
@@ -26,7 +75,10 @@ beforeEach(() => {
           }),
         };
       }
-      return { ok: true, json: async () => ({}) };
+      if (url.includes("/api/token")) {
+        return { ok: true, json: async () => ({ value: "test-secret" }) };
+      }
+      return { ok: true, text: async () => "answer-sdp" };
     }),
   );
 });
@@ -76,6 +128,30 @@ describe("World Room 앱", () => {
     expect(screen.getByRole("button", { name: "선택지 제안" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("창작 브리프를 Realtime 세션에 먼저 적용한 뒤 첫 응답을 요청한다", async () => {
+    render(<App />);
+
+    fireEvent.change(screen.getByLabelText("세계 이름"), { target: { value: "거꾸로 비가 내리는 항구" } });
+    fireEvent.change(screen.getByLabelText("세계 씨앗"), { target: { value: "바다가 하늘로 흐른다" } });
+    fireEvent.click(screen.getByRole("button", { name: "어두운" }));
+    fireEvent.click(screen.getByRole("button", { name: "미스터리" }));
+    fireEvent.click(screen.getByRole("button", { name: "선택지 제안" }));
+    fireEvent.click(screen.getByRole("button", { name: /세션 시작/ }));
+
+    await waitFor(() => expect(RTCPeerConnection).toHaveBeenCalled());
+    peer.channel.open();
+
+    await waitFor(() => expect(peer.channel.sent).toHaveLength(3));
+
+    const events = peer.channel.sent.map((message) => JSON.parse(message));
+    expect(events.map((event) => event.type)).toEqual(["session.update", "conversation.item.create", "response.create"]);
+    expect(events[0].session.instructions).toContain("거꾸로 비가 내리는 항구");
+    expect(events[0].session.instructions).toContain("바다가 하늘로 흐른다");
+    expect(events[0].session.instructions).toContain("어두운");
+    expect(events[0].session.instructions).toContain("미스터리");
+    expect(events[0].session.instructions).toContain("선택지 제안");
+    expect(events[0].session.instructions).toContain("사용자에게 확인");
+  });
   it("저장된 세계를 삭제할 수 있다", async () => {
     render(<App />);
 

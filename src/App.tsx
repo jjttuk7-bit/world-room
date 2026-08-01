@@ -221,26 +221,36 @@ export default function App() {
     const channel = channelRef.current;
     if (!channel || channel.readyState !== "open") return;
 
-    channel.send(
-      JSON.stringify({
-        type: "conversation.item.create",
-        item: {
-          type: "message",
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: selectedWorld
-                ? `이전 세계를 이어갑니다. 제목: ${selectedWorld.title}\n기억 요약: ${selectedWorld.continuityBrief}\n한국어로 짧게 반갑게 맞이하고, 지난 세계의 다음 장면으로 들어가는 질문 하나를 던져줘.`
-                : buildSeedPrompt(worldSeed, mood, genre, companionMode),
-            },
-          ],
-        },
-      }),
-    );
-    channel.send(JSON.stringify({ type: "response.create" }));
+    try {
+      channel.send(
+        JSON.stringify({
+          type: "session.update",
+          session: { instructions: buildBriefInstructions() },
+        }),
+      );
+      channel.send(
+        JSON.stringify({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: selectedWorld
+                  ? `이전 세계를 이어갑니다. 제목: ${selectedWorld.title}\n기억 요약: ${selectedWorld.continuityBrief}\n한국어로 짧게 반갑게 맞이하고, 지난 세계의 다음 장면으로 들어가는 질문 하나를 던져줘.`
+                  : buildSeedPrompt(worldSeed, mood, genre, companionMode),
+              },
+            ],
+          },
+        }),
+      );
+      channel.send(JSON.stringify({ type: "response.create" }));
+    } catch {
+      setSessionState("recovering");
+      setStatusText("데이터 채널이 닫혔습니다. 세션을 다시 시작할 수 있습니다.");
+    }
   }
-
   function sendTextPrompt(prompt: string) {
     const channel = channelRef.current;
     if (!channel || channel.readyState !== "open") return;
@@ -324,6 +334,19 @@ export default function App() {
     }
   }
 
+  function buildBriefInstructions() {
+    const title = selectedWorld?.title ?? (worldTitle.trim() || "아직 정해지지 않음");
+    const seed = selectedWorld?.continuityBrief ?? (worldSeed.trim() || "아직 정해지지 않음");
+
+    return `당신은 World Room의 한국어 창작 동반자입니다. 아래 창작 브리프를 이 세션의 최우선 지침으로 적용하세요.
+창작 브리프:
+- 제목: ${title}
+- 씨앗: ${seed}
+- 분위기: ${mood}
+- 장르: ${genre}
+- 동반자 방식: ${companionMode}
+브리프를 정교화하거나 확장하는 아이디어만 제안하세요. 브리프와 실질적으로 충돌하는 제안이 필요하면 채택하지 말고, 무엇이 충돌하는지 짧게 설명한 뒤 사용자에게 확인을 요청하세요. 첫 응답은 아직 정해지지 않은 요소를 좁히는 짧은 질문 하나로 시작하세요.`;
+  }
   function buildSeedPrompt(seed: string, selectedMood: string, selectedGenre: string, mode: string) {
     return `새 세계를 엽니다.
 세계 이름: ${worldTitle.trim() || "아직 정해지지 않음"}
