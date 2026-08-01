@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { appendTranscriptLine, reduceRealtimeEvent } from "./realtime/events";
 import type { RealtimeSignal, TranscriptLine } from "./realtime/events";
 import type { StoryCanon, StoryDraft, StoryScene } from "./story/models";
-import { approvedBriefOpeningContext, createCreativeBrief, type CreativeBrief } from "./brief/models";
+import { createCreativeBrief, type CreativeBrief } from "./brief/models";
 
 type SessionState = "idle" | "requesting" | "connecting" | "ready" | "listening" | "speaking" | "recovering" | "ended" | "error";
 
@@ -199,7 +199,11 @@ export default function App() {
       setSessionState("connecting");
       setStatusText("Realtime 세션을 여는 중");
 
-      const tokenResponse = await fetch(tokenUrl);
+      const tokenResponse = await fetch(tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(creativeBrief),
+      });
       if (!tokenResponse.ok) {
         throw new Error(await tokenResponse.text());
       }
@@ -317,9 +321,7 @@ export default function App() {
           content: [
             {
               type: "input_text",
-              text: selectedWorld
-                ? `이전 세계를 이어갑니다. 제목: ${selectedWorld.title}\n기억 요약: ${selectedWorld.continuityBrief}\n한국어로 짧게 반갑게 맞이하고, 지난 세계의 다음 장면으로 들어가는 질문 하나를 던져줘.`
-                : buildSeedPrompt(worldSeed, mood, genre, companionMode),
+              text: `승인된 브리프의 이번 대화 목표인 "${creativeBrief?.sessionGoal || "다음 장면"}"을 한 걸음 진행할 수 있도록, 한국어로 짧게 질문 하나만 해줘.`,
             },
           ],
         },
